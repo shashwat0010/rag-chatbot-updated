@@ -19,7 +19,7 @@ async def search_papers(
     request: Request,
     body: SearchPapersRequest,
 ) -> SearchPapersResponse:
-    safety = check_query_safety(body.query, block_emergency=False)
+    safety = await check_query_safety(body.query, block_emergency=False)
     if not safety.allowed:
         raise HTTPException(status_code=400, detail=safety.message)
 

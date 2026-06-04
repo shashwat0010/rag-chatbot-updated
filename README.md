@@ -1,6 +1,6 @@
 # 🩺 Jubilant AI: Medical Research Assistant
 
-An AI-powered medical research assistant designed for clinicians and researchers. It provides evidence-grounded answers by combining real-time **PubMed** retrieval with a **Retrieval-Augmented Generation (RAG)** pipeline.
+An AI-powered medical research assistant designed for clinicians and researchers. It provides evidence-grounded answers by combining real-time **PubMed** literature retrieval with a custom **Retrieval-Augmented Generation (RAG)** pipeline.
 
 > **⚠️ Disclaimer:** This tool is for research support only. It is not intended for emergency care, clinical diagnosis, or personal treatment decisions.
 
@@ -8,48 +8,88 @@ An AI-powered medical research assistant designed for clinicians and researchers
 
 ---
 
-## 🚀 Key Features
+## 🏗️ System Architecture
 
-- **Live PubMed Integration:** Fetches the latest peer-reviewed abstracts directly from the National Library of Medicine.
-- **Hybrid Retrieval:** Combines FAISS semantic search (cosine similarity via Mistral embeddings) and BM25 sparse keyword search for robust evidence gathering.
-- **Memory Optimized (Render-Ready):** Employs Reciprocal Rank Fusion (RRF) for fast, accurate ranking without heavy local neural networks, ensuring <512MB RAM usage.
-- **RAG Pipeline:** Generates structured answers using **Mistral AI** (`mistral-large-latest`) with direct citations.
-- **Medical Safety Guardrails:** Built-in checks for emergency keywords, query quality validation, and clinical confidence thresholds.
-- **Modern UI:** Responsive dashboard built with Next.js, Tailwind CSS, and Shadcn UI.
-
----
-
-## 🏗️ Architecture
-
-![Architecture Diagram]()
-
-The system follows a modular RAG architecture to ensure data freshness and clinical relevance:
+The application is structured around a modular RAG pipeline that balances speed, cost, and memory efficiency:
 
 ```mermaid
 flowchart TD
     User([Clinician Query]) --> UI[Next.js Frontend]
     UI --> API[FastAPI Backend]
     
-    subgraph "Retrieval Stage"
-        API --> PubMed[PubMed E-Utilities]
-        PubMed --> Scraper[Abstract Extraction]
-        Scraper --> Chunker[Text Chunking]
+    subgraph "1. Guardrails & Classification"
+        API --> Guard[LLM Scope Classifier & Keyword Blockers]
     end
     
-    subgraph "Processing Stage"
-        Chunker --> Embeddings[Mistral Embeddings]
-        Embeddings --> Hybrid[FAISS + BM25 Hybrid Search]
-        Hybrid --> RRF[Reciprocal Rank Fusion]
+    subgraph "2. Query Processing"
+        Guard --> Normalizer[Casual-to-Medical Normalizer]
+        Normalizer --> Expansion[Synonym & Disease Boolean Expansion]
     end
     
-    subgraph "Generation Stage"
-        RRF --> Prompt[Context-Rich Prompt]
+    subgraph "3. Dynamic Retrieval"
+        Expansion --> PubMed[PubMed E-Utilities API]
+        PubMed --> Scraper[Abstract Scraper & Chunker]
+    end
+    
+    subgraph "4. Vector Search & Fusion"
+        Scraper --> Embeddings[Mistral Embeddings]
+        Embeddings --> FAISS[FAISS Vector Store]
+        Scraper --> BM25[BM25 Keyword Search]
+        FAISS & BM25 --> RRF[Reciprocal Rank Fusion RRF]
+    end
+    
+    subgraph "5. Deep Semantic Reranking"
+        RRF --> Reranker[Lazy CrossEncoder Reranker]
+    end
+    
+    subgraph "6. Synthesis & Scoring"
+        Reranker --> Calibration[Confidence Scoring Calibration]
+        Calibration --> Prompt[Context-Rich Prompt]
         Prompt --> LLM[Mistral LLM]
-        LLM --> Response[Answer + Citations]
+        LLM --> Grounding[Validate Answer Grounding]
     end
     
+    Grounding --> Response[Grounded Answer + Citations]
     Response --> UI
 ```
+
+---
+
+## 🚀 Key Features & Detailed Pipeline Explanation
+
+### 1. Medical Scope Classification & Safety Guardrails
+- **Emergency Keywords**: Fast regex checks block high-risk terms (e.g., "suicide", "stroke symptoms", "heart attack") and prompt the user to seek immediate emergency care.
+- **LLM Scope Classifier**: Incoming queries are processed by a Mistral scope classifier to categorize them into:
+  - `GREETING`: Greetings or general assistant information.
+  - `MEDICAL_IN_SCOPE`: Scientific, clinical, and conceptual questions.
+  - `PATIENT_SPECIFIC`: Personal diagnostic or treatment questions. These are allowed but returned with an auto-appended patient disclaimer.
+  - `NON_MEDICAL`: General questions (e.g., weather, stocks). These are refused with a polite out-of-scope notice.
+
+### 2. Query Preprocessing & Boolean Expansion
+- **Casual-to-Medical Normalization**: Converts casual health vocabulary to standard clinical terminology (e.g., `"kidney pain"` ➔ `"nephropathy"`, `"high sugar"` ➔ `"hyperglycemia"`).
+- **Boolean Expansion**: Automatically pulls synonym groups and joins them using Boolean operators (e.g., `(hyperglycemia OR "high sugar" OR "high glucose")`) to maximize PubMed search coverage.
+
+### 3. Dynamic PubMed Retrieval & Smart Simplification
+- **Progressive PubMed Search**: PubMed search is executed using E-utilities. If a long, complex clinical query is submitted, strict filters may fail. The system tries progressively broader strategies:
+  1. Strict expanded Boolean query combined with publication types (systematic reviews, meta-analyses, RCTs).
+  2. Raw expanded Boolean query.
+  3. Cleaned, keyword-only fallback query.
+- **Keyword Truncation Protection**: The fallback query ignores general stop words (including prepositions like `"of"`) and clinical search fillers (e.g., `compare`, `efficacy`, `versus`, `treating`). This prevents core medical concepts (such as drug names or specific conditions) from being truncated when the query exceeds PubMed's keyword budget.
+
+### 4. Sparse/Dense Hybrid Search & RRF
+- **Embedding Generation**: Abstracts from retrieved papers are split into overlapping chunks and vectorized using Mistral embeddings (`mistral-embed`).
+- **Reciprocal Rank Fusion (RRF)**: Merges sparse keyword scores (BM25) with dense semantic similarity scores (FAISS IndexFlatIP) to produce a unified, robust ranking of candidate chunks.
+
+### 5. Memory-Optimized Deep Semantic Reranking
+- **Cross-Encoder Model**: Restores the high-accuracy `cross-encoder/ms-marco-MiniLM-L-6-v2` model to evaluate the deep semantic relationship between the query and candidate abstracts.
+- **Lazy Loading**: The model is only loaded into RAM when a query requires reranking, keeping server startup fast.
+- **RAM Safety Guards**: Using `psutil`, the system monitors local RAM percent usage. If memory usage exceeds `95%` (configurable), the reranker is safely skipped, falling back to FAISS/BM25 scores to prevent Out-Of-Memory (OOM) crashes on constrained environments like Render's free 512MB tier.
+
+### 6. Confidence Calibration & Answer Grounding
+- **Confidence Calibration**: Embeddings cosine similarity scores (compressed in the high `0.65` to `0.95` range) are mapped to a linear `0.0` to `1.0` scale.
+- **Trusted Journals Boost**: Boosts confidence scores when articles are from reputable medical journals (e.g., *BMJ*, *Lancet*, *NEJM*, *JAMA*).
+- **Strict Evidence Calibration**: If PubMed returns 0 results for a query, the confidence score drops strictly to `0.0` and the system returns a safe, standardized fallback message: *"Limited direct evidence found; related literature suggests possible associations."*
+- **Fact Grounding Guard**: Checks generated answers against the source abstracts to ensure no hallucinations.
 
 ---
 
@@ -57,88 +97,88 @@ flowchart TD
 
 ```text
 jubilant_ai/
-├── frontend/          # Next.js + Tailwind + shadcn/ui
-│   ├── src/app/       # Page layouts and routing
-│   ├── src/components # UI components (Chat, Response cards)
-│   └── src/lib        # API client and utilities
-├── backend/           # FastAPI + RAG Logic
-│   ├── app/           # API routes, config, and rate limiting
-│   ├── rag/           # Vector store, LLM integration, and scoring
-│   ├── services/      # PubMed API, embeddings, and safety guardrails
-│   └── models/        # Pydantic schemas for validation
-└── docs/              # Sample queries and documentation
+├── frontend/             # Next.js UI
+│   ├── src/app/          # App layouts, style themes, and page routing
+│   ├── src/components/   # Presentational UI components (Chat interface, cards)
+│   │   └── chat/         # Custom ResponseCard & StructuredAnswer layouts
+│   └── src/lib/          # API models and client wrappers
+├── backend/              # FastAPI Application
+│   ├── app/              # Router, rate limits, and configurations
+│   ├── rag/              # Vector store, scoring, RAG pipelines, and normalizers
+│   ├── services/         # PubMed API, embeddings, and CrossEncoder reranker
+│   ├── models/           # Pydantic validation schemas
+│   └── scratch/          # Integration, API, and bug verification scripts
+└── docs/                 # Documentation and sample queries
 ```
 
 ---
 
-## 🚦 Getting Started
+## 🚦 Configuration & Local Setup
 
-### Prerequisites
-- Python 3.11+
-- Node.js 20+
-- API Keys: [Mistral AI](https://console.mistral.ai/)
+### Environment Variables (.env)
 
-### 1. Backend Setup
+Create a `backend/.env` file with the following variables:
+
+```ini
+# Mistral AI (Required for embeddings, classification, and generation)
+MISTRAL_API_KEY=your_mistral_api_key_here
+MISTRAL_MODEL=mistral-large-latest
+
+# PubMed & Retrieval Controls
+PUBMED_MAX_RESULTS=15
+PUBMED_RETRIEVAL_TOP_K=8
+MIN_RELEVANCE_SCORE=0.35
+MIN_EVIDENCE_CHUNKS=2
+
+# Server Configuration
+API_HOST=127.0.0.1
+API_PORT=8080
+CORS_ORIGINS=http://localhost:3000
+
+# Rate Limiting
+RATE_LIMIT_PER_MINUTE=20
+
+# Medical Safety
+BLOCK_EMERGENCY_KEYWORDS=true
+MIN_CONFIDENCE_THRESHOLD=0.4
+```
+
+### 1. Backend Setup (FastAPI)
 ```bash
 cd backend
 python -m venv .venv
 
-# Activate Virtual Env (Windows)
+# Activate Virtual Env (Windows PowerShell)
 .venv\Scripts\activate
 
-# Install Dependencies
+# Install Dependencies (includes CPU-only PyTorch for reranker)
 pip install -r requirements.txt
 
-# Configure Environment
-cp .env.example .env
-# Edit .env and set your MISTRAL_API_KEY
-```
-
-**Run Backend:**
-```bash
-# Windows PowerShell
+# Run the API server
 $env:PYTHONPATH="."
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8080
 ```
-*API will be available at [http://localhost:8080/docs](http://localhost:8080/docs)*
+*Backend API docs will be active at [http://127.0.0.1:8080/docs](http://127.0.0.1:8080/docs)*
 
-### 2. Frontend Setup
+### 2. Frontend Setup (Next.js)
 ```bash
 cd frontend
 npm install
 
-# Configure Environment
+# Configure local env
 cp .env.example .env.local
-# Ensure NEXT_PUBLIC_API_URL=http://localhost:8080
-```
+# Make sure NEXT_PUBLIC_API_URL=http://localhost:8080
 
-**Run Frontend:**
-```bash
+# Run Next.js in development mode
 npm run dev
 ```
-*UI will be available at [http://localhost:3000](http://localhost:3000)*
+*Frontend interface will be active at [http://localhost:3000](http://localhost:3000)*
 
 ---
 
-## 📖 Usage Examples
+## 🛡️ Production Deployment (e.g., Render)
 
-Try these queries to see the assistant in action:
-- *"What is the efficacy of SGLT2 inhibitors in heart failure with preserved ejection fraction?"*
-- *"Recent RCT evidence for first-line antihypertensive therapy in adults under 55"*
-- *"Meta-analysis evidence for metformin in gestational diabetes"*
-
----
-
-## 🛡️ Safety & Reliability
-
-- **Confidence Scoring:** Every response includes a confidence score based on the relevance of the retrieved evidence.
-- **Source Citations:** Answers are grounded in specific PubMed IDs (PMIDs) with direct links to the original papers.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
----
-*Developed for the intersection of AI and Evidence-Based Medicine.*
+The backend is configured to support memory constraints out-of-the-box:
+1. **Dynamic Reranking**: If deployed on a Render free tier containing only `512MB` of RAM, the system will detect that memory usage exceeds the safety threshold (`95%`) and bypass the heavy Cross-Encoder execution, ensuring high availability and zero OOM crashes.
+2. **Docker Setup**: A `Dockerfile` is provided in both backend and frontend directories for containerized hosting.
+3. **CORS / Domain Security**: Ensure `CORS_ORIGINS` in your production environment variables points exactly to your frontend domain.

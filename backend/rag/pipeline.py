@@ -18,6 +18,7 @@ from services.pubmed import prioritize_trusted_journals, search_pubmed
 from rag.query_preprocessor import normalize_query, expand_query
 from rag.response_generator import generate_response
 from rag.query_quality import assess_query_quality
+from services.reranker import get_reranker
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,9 @@ class RAGPipeline:
 
     async def run(self, query: str, max_papers: Optional[int] = None, risk_level: str = "LOW") -> QueryResponse:
         settings = get_settings()
+
+        # Clean query by stripping outer quotes and whitespace
+        query = query.strip().strip('"').strip("'").strip()
 
         is_valid, reason, q_score, ignored_tokens = assess_query_quality(query)
         logger.info("Query quality score: %.2f (Ignored tokens: %s)", q_score, ignored_tokens)
@@ -110,7 +114,21 @@ class RAGPipeline:
                 normalized_query, top_k=20
             )
             
-            # Since reranker is removed, we just rely on the baseline semantic scores
+            # Apply Cross-Encoder Reranker
+            if hybrid_chunks:
+                logger.info("Reranking %d candidate chunks", len(hybrid_chunks))
+                texts = [c.text for c in hybrid_chunks]
+                reranker = get_reranker()
+                rerank_scores = reranker.safe_rerank(normalized_query, texts)
+                
+                if rerank_scores:
+                    # Overwrite RRF/FAISS scores with high-quality cross-encoder sigmoid scores
+                    for chunk, r_score in zip(hybrid_chunks, rerank_scores):
+                        chunk.score = float(r_score)
+                    hybrid_chunks.sort(key=lambda c: c.score, reverse=True)
+                else:
+                    logger.warning("Skipped reranking. Falling back to FAISS/BM25 scores.")
+                
             chunks = hybrid_chunks[:settings.pubmed_retrieval_top_k]
             
         except (OpenAIQuotaError, EmbeddingServiceError) as exc:
@@ -197,6 +215,9 @@ class RAGPipeline:
         
         if risk_level == "HIGH":
             response.answer += "\n\n**Important Safety Notice:** Current evidence does not support replacing evidence-based treatment with unverified alternatives. Supportive approaches may help symptom management, but treatment decisions should be made with a licensed clinician or specialist."
+            
+        if risk_level == "PATIENT_SPECIFIC":
+            response.answer += "\n\n**Disclaimer:** The output is for information purposes only and does not constitute medical advice, diagnosis, or treatment. Always verify information against primary, peer-reviewed clinical guidelines."
             
         return response
 

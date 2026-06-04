@@ -44,8 +44,18 @@ async def query_medical_research(
             detail="Mistral API key is not configured. Set MISTRAL_API_KEY in the environment.",
         )
 
-    safety = check_query_safety(body.query, settings.block_emergency_keywords)
+    safety = await check_query_safety(body.query, settings.block_emergency_keywords)
     if not safety.allowed:
+        if safety.risk_level in ("NON_MEDICAL", "PATIENT_SPECIFIC"):
+            return QueryResponse(
+                answer=safety.message,
+                citations=[],
+                confidence_note=f"Policy Check: {safety.message}",
+                confidence_score=0.0,
+                insufficient_evidence=False,
+                sources_searched=[],
+                confidence_label="Scope Refusal"
+            )
         # If it's too short, but it's a greeting, we might want to allow it
         if not is_greeting_or_meta(body.query):
             raise HTTPException(status_code=400, detail=safety.message)

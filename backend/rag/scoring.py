@@ -22,7 +22,13 @@ def _calibrate_raw_score(raw: float, use_local: bool) -> float:
         if raw <= 0.08:
             return raw
         return min(0.92, 0.42 + (raw - 0.08) * 1.35)
-    return min(0.95, raw)
+    
+    # Mistral cosine similarities are compressed in the high range (typically 0.65 to 0.95)
+    if raw <= 0.70:
+        return round(max(0.0, raw * 0.2), 3)
+    if raw <= 0.85:
+        return round(0.14 + (raw - 0.70) * 3.0, 3)
+    return round(min(0.95, 0.59 + (raw - 0.85) * 3.6), 3)
 
 
 def compute_retrieval_confidence(
@@ -72,6 +78,6 @@ def retrieval_is_sufficient(
         return False
     if len(papers) >= min_papers and len(chunks) >= 1:
         top = max(c.score for c in chunks)
-        floor = 0.12 if use_local else 0.35
+        floor = 0.12 if use_local else 0.78
         return top >= floor
     return False

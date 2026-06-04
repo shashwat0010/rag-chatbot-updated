@@ -47,8 +47,18 @@ _STOP_WORDS = {
     "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "at", "by", "for", "with",
     "about", "against", "between", "into", "through", "during", "before", "after", "above", "below",
     "to", "from", "up", "down", "in", "out", "on", "off", "over", "under", "again", "further",
-    "then", "once", "hi", "hello", "hii", "hey", "howdy", "greetings"
+    "then", "once", "hi", "hello", "hii", "hey", "howdy", "greetings", "of", "is", "are", "was",
+    "were", "be", "been", "being", "have", "has", "had", "do", "does", "did"
 }
+
+# Clinical/search filler words that do not represent core medical concepts and should be ignored in keyword fallbacks
+FALLBACK_IGNORED = {
+    "compare", "comparison", "efficacy", "effectiveness", "side", "effect", 
+    "effects", "profile", "profiles", "tolerability", "safety", "treating", 
+    "treatment", "treat", "guidelines", "guideline", "managing", "management", 
+    "clinical", "trial", "outcomes", "outcome", "patients", "patient", "versus", "vs"
+}
+
 
 def _simplify_query_for_pubmed(query: str) -> str:
     """Turn natural-language questions into PubMed-friendly search terms."""
@@ -82,6 +92,46 @@ def _simplify_query_for_pubmed(query: str) -> str:
             return " ".join(filtered)
             
     return q.strip() or query.strip()
+
+
+def _make_fallback_query(query: str) -> str:
+    """Create a clean, keyword-only fallback query by stripping punctuation, Boolean operators, and stop words."""
+    q = query.lower()
+    # Replace common punctuation with spaces
+    q = re.sub(r"[()\"'?,.!;:\-\[\]]", " ", q)
+    
+    # Strip question prefixes
+    q = _QUESTION_PREFIX.sub("", q)
+    
+    # Strip clinical filler phrases
+    for phrase in (
+        "the efficacy of",
+        "the effectiveness of",
+        "the role of",
+        "evidence for",
+        "evidence on",
+        "recent",
+        "current",
+    ):
+        q = q.replace(phrase, " ")
+        
+    words = q.split()
+    
+    # Filter out stop words, Boolean operators, and clinical search fillers
+    ignored = _STOP_WORDS.union({"and", "or", "not"}).union(FALLBACK_IGNORED)
+    keywords = [w for w in words if w not in ignored]
+    
+    # Take first 8 unique keywords
+    seen = set()
+    unique_keywords = []
+    for w in keywords:
+        if w not in seen:
+            seen.add(w)
+            unique_keywords.append(w)
+            if len(unique_keywords) >= 8:
+                break
+                
+    return " ".join(unique_keywords)
 
 
 async def _esearch(client: httpx.AsyncClient, term: str, limit: int) -> List[str]:
@@ -122,7 +172,7 @@ async def search_pubmed(query: str, max_results: Optional[int] = None) -> List[P
     search_terms = [
         f"({simplified}) AND (systematic review[pt] OR meta-analysis[pt] OR randomized controlled trial[pt] OR review[pt])",
         simplified,
-        " ".join(simplified.split()[:8]),  # shorter keyword window
+        _make_fallback_query(query),  # clean keyword-only fallback query
     ]
     # Deduplicate while preserving order
     seen_terms: set[str] = set()
