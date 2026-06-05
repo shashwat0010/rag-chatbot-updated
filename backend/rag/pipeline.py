@@ -82,7 +82,7 @@ class RAGPipeline:
         logger.info("Expanded PubMed query: %s", expanded_query)
 
         # 2. Search PubMed using the high-quality Boolean expanded query
-        papers = await search_pubmed(expanded_query, max_results=max_papers)
+        papers = await search_pubmed(expanded_query, max_results=max_papers, raw_query=query)
         papers = prioritize_trusted_journals(papers)
 
         # 3. Handle zero search results fallback

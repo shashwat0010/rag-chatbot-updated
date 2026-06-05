@@ -56,22 +56,23 @@ FALLBACK_IGNORED = {
     "compare", "comparison", "efficacy", "effectiveness", "side", "effect", 
     "effects", "profile", "profiles", "tolerability", "safety", "treating", 
     "treatment", "treat", "guidelines", "guideline", "managing", "management", 
-    "clinical", "trial", "outcomes", "outcome", "patients", "patient", "versus", "vs"
+    "clinical", "trial", "outcomes", "outcome", "patients", "patient", "versus", "vs",
+    "evidence", "based", "association", "associations", "associated", "relationship",
+    "relationships", "link", "links", "correlation", "correlations", "role", "roles",
+    "impact", "impacts"
 }
+
 
 
 def _simplify_query_for_pubmed(query: str) -> str:
     """Turn natural-language questions into PubMed-friendly search terms."""
     q = query.strip().rstrip("?.!")
     
-    # Preserve Boolean queries with uppercase AND/OR or parenthesis
-    words = q.split()
-    if len(words) > 1:
-        if any(w in ("AND", "OR") for w in words) or "(" in q or ")" in q:
-            return q
-
+    # Clean mathematical comparison operators to prevent PubMed parse failures
+    q = q.replace(">", " ").replace("<", " ").replace("=", " ")
+    
+    # Strip natural-language question prefixes and clinical fillers first
     q = _QUESTION_PREFIX.sub("", q)
-    # Drop filler phrases common in clinical questions
     for phrase in (
         "the efficacy of ",
         "the effectiveness of ",
@@ -80,10 +81,24 @@ def _simplify_query_for_pubmed(query: str) -> str:
         "evidence on ",
         "recent ",
         "current ",
+        "the evidence-based association between ",
+        "the evidence-based association of ",
+        "evidence-based association between ",
+        "evidence-based association of ",
+        "association between ",
+        "association of ",
+        "relationship between ",
+        "relationship of ",
     ):
         if q.lower().startswith(phrase):
             q = q[len(phrase) :]
-    
+            
+    # Preserve Boolean queries with uppercase AND/OR or parenthesis
+    words = q.split()
+    if len(words) > 1:
+        if any(w in ("AND", "OR") for w in words) or "(" in q or ")" in q:
+            return q
+
     # Final filter: remove common stop words and greetings if they're not the only words
     words = q.split()
     if len(words) > 1:
@@ -94,11 +109,12 @@ def _simplify_query_for_pubmed(query: str) -> str:
     return q.strip() or query.strip()
 
 
+
 def _make_fallback_query(query: str) -> str:
     """Create a clean, keyword-only fallback query by stripping punctuation, Boolean operators, and stop words."""
     q = query.lower()
-    # Replace common punctuation with spaces
-    q = re.sub(r"[()\"'?,.!;:\-\[\]]", " ", q)
+    # Replace common punctuation and comparison operators with spaces
+    q = re.sub(r"[()\"'?,.!;:\-\[\]><=]", " ", q)
     
     # Strip question prefixes
     q = _QUESTION_PREFIX.sub("", q)
@@ -112,14 +128,25 @@ def _make_fallback_query(query: str) -> str:
         "evidence on",
         "recent",
         "current",
+        "the evidence-based association between",
+        "the evidence-based association of",
+        "evidence-based association between",
+        "evidence-based association of",
+        "association between",
+        "association of",
+        "relationship between",
+        "relationship of",
     ):
         q = q.replace(phrase, " ")
         
     words = q.split()
     
-    # Filter out stop words, Boolean operators, and clinical search fillers
+    # Filter out stop words, Boolean operators, clinical search fillers, and pure numbers
     ignored = _STOP_WORDS.union({"and", "or", "not"}).union(FALLBACK_IGNORED)
-    keywords = [w for w in words if w not in ignored]
+    keywords = []
+    for w in words:
+        if w not in ignored and not w.isdigit():
+            keywords.append(w)
     
     # Take first 8 unique keywords
     seen = set()
@@ -132,6 +159,7 @@ def _make_fallback_query(query: str) -> str:
                 break
                 
     return " ".join(unique_keywords)
+
 
 
 async def _esearch(client: httpx.AsyncClient, term: str, limit: int) -> List[str]:
@@ -163,16 +191,21 @@ async def _fetch_xml(client: httpx.AsyncClient, id_list: List[str]) -> str:
     return response.text
 
 
-async def search_pubmed(query: str, max_results: Optional[int] = None) -> List[PaperMetadata]:
+async def search_pubmed(
+    query: str, 
+    max_results: Optional[int] = None, 
+    raw_query: Optional[str] = None
+) -> List[PaperMetadata]:
     settings = get_settings()
     limit = max_results or settings.pubmed_max_results
     simplified = _simplify_query_for_pubmed(query)
 
+    fallback_base = raw_query or query
     # Try progressively broader strategies (long questions often fail strict filters)
     search_terms = [
         f"({simplified}) AND (systematic review[pt] OR meta-analysis[pt] OR randomized controlled trial[pt] OR review[pt])",
         simplified,
-        _make_fallback_query(query),  # clean keyword-only fallback query
+        _make_fallback_query(fallback_base),  # clean keyword-only fallback query
     ]
     # Deduplicate while preserving order
     seen_terms: set[str] = set()
