@@ -41,7 +41,7 @@ SYMPTOMS_LIST = {
     "hypertension", "hypotension", "nephropathy", "neuropathy", 
     "retinopathy", "edema", "pyrexia", "rhinitis", "myocardial infarction", 
     "cerebrovascular accident", "dyspnea", "arthralgia", "myalgia", 
-    "alopecia", "cephalgia", "dysphagia", "cough"
+    "alopecia", "cephalgia", "dysphagia", "cough", "tachycardia"
 }
 
 

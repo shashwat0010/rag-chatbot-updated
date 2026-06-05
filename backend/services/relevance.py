@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 @retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1.5, min=2, max=8),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=3, max=15),
     reraise=True
 )
 async def _call_llm_with_retry(llm: ChatMistralAI, messages: list) -> any:
@@ -119,3 +119,78 @@ async def check_paper_relevance(query: str, title: str, abstract: str) -> Tuple[
     paper = DummyPaper("dummy", title, abstract)
     results = await check_papers_relevance_batch(query, [paper])
     return results.get("dummy", (True, "Fallback due to missing result in batch."))
+
+
+async def translate_query_pico(query: str) -> dict:
+    """
+    Translate a colloquial or patient-specific query into clean medical keywords
+    and inferred conditions using the PICO framework.
+    """
+    default_res = {
+        "pico_analysis": {
+            "patient_problem": query,
+            "intervention": "",
+            "comparison": "",
+            "outcome": ""
+        },
+        "simplified_search_query": query,
+        "inferred_diseases": []
+    }
+    
+    settings = get_settings()
+    if not settings.mistral_api_key:
+        return default_res
+        
+    try:
+        llm = ChatMistralAI(
+            model=settings.mistral_model,
+            api_key=settings.mistral_api_key,
+            temperature=0.0,
+            max_tokens=250,
+        )
+        
+        prompt = f"""You are a medical informatics expert. Analyze the raw user clinical query below (which may be conversational, symptom-heavy, or patient-specific) and translate it into search keywords optimized for PubMed, using the PICO (Patient, Intervention, Comparison, Outcome) framework.
+
+User Query:
+{query}
+
+Instructions:
+1. Identify the Patient/Problem (P), Intervention (I), Comparison (C), and Outcome (O).
+2. Translate colloquial symptoms and terms to standard medical subject headings (MeSH) or clinical terms (e.g. "high bp" -> "hypertension", "blurry vision" -> "blurred vision", "heart rate" -> "tachycardia" or "heart rate", "heart attack" -> "myocardial infarction", "high sugar" -> "hyperglycemia" or "diabetes").
+3. Generate a simplified search query for PubMed. Keep it simple, keyword-focused, and restricted ONLY to core medical symptoms, clinical conditions, or therapeutic agents (max 3-5 terms, connected by simple spaces, avoiding natural language phrases, symbols like >, <, or question marks). Do NOT include demographics (such as age, gender, e.g., '45 years old', 'middle aged adult', 'male', 'female'), action verbs, or generic clinical words (such as 'management', 'fixes', 'treatment', 'diagnosis', 'options', 'patient', 'clinical', 'care', 'home', 'etiology', 'cause', 'causes', 'symptoms', 'signs'). Keep the query strictly focused on the medical symptoms/diseases.
+4. Identify any inferred diseases or conditions (e.g., "hypertension", "blurred vision", "headache"). Do NOT include age, demographics, or generic words as inferred diseases.
+5. Output valid JSON only with this structure:
+{{
+  "pico_analysis": {{
+    "patient_problem": "...",
+    "intervention": "...",
+    "comparison": "...",
+    "outcome": "..."
+  }},
+  "simplified_search_query": "...",
+  "inferred_diseases": ["disease1", "disease2", ...]
+}}
+"""
+        messages = [HumanMessage(content=prompt)]
+        response = await _call_llm_with_retry(llm, messages)
+        content = response.content if isinstance(response.content, str) else str(response.content)
+        content = content.strip()
+        
+        if content.startswith("```"):
+            content = re.sub(r"^```(?:json)?\s*", "", content)
+            content = re.sub(r"\s*```$", "", content)
+            
+        try:
+            parsed = json.loads(content)
+            # Validate output
+            if "simplified_search_query" in parsed:
+                return parsed
+        except Exception:
+            pass
+            
+        return default_res
+        
+    except Exception as exc:
+        logger.error("Error translating query via PICO: %s", exc)
+        return default_res
+

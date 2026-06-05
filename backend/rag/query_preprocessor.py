@@ -30,7 +30,11 @@ CASUAL_TO_MEDICAL = {
     "muscle pain": "myalgia",
     "hair loss": "alopecia",
     "headache": "cephalgia",
-    "difficulty swallowing": "dysphagia"
+    "difficulty swallowing": "dysphagia",
+    "high heart rate": "tachycardia",
+    "fast heart rate": "tachycardia",
+    "rapid heart rate": "tachycardia",
+    "heart rate": "tachycardia"
 }
 
 SYNONYMS = {
@@ -54,6 +58,7 @@ SYNONYMS = {
     "myalgia": ["myalgia", "muscle pain", "muscle soreness"],
     "alopecia": ["alopecia", "hair loss", "baldness"],
     "cephalgia": ["cephalgia", "headache", "migraine"],
+    "tachycardia": ["tachycardia", "high heart rate", "elevated heart rate", "heart rate", "fast heart rate"],
     "Type 2 Diabetes": ["Type 2 Diabetes", "diabetes mellitus", "T2D"],
     "Metabolic Syndrome": ["Metabolic Syndrome", "syndrome X"]
 }

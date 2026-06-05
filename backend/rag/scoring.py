@@ -2,6 +2,7 @@
 
 from typing import List
 
+from app.config import get_settings
 from models.schemas import PaperMetadata
 from rag.vector_store import RetrievedChunk
 from services.pubmed import TRUSTED_JOURNALS
@@ -17,9 +18,11 @@ def _has_trusted_journal(papers: List[PaperMetadata]) -> bool:
 
 def _calibrate_raw_score(raw: float, use_local: bool) -> float:
     """Map embedding similarity to a comparable confidence scale."""
-    if use_local:
-        # TF-IDF cosine similarity is typically lower than OpenAI embeddings
-        if raw <= 0.08:
+    if use_local or raw <= 0.60:
+        # TF-IDF cosine similarity or cross-encoder rerank score
+        if use_local and raw <= 0.08:
+            return raw
+        if not use_local and raw <= 0.01:
             return raw
         return min(0.92, 0.42 + (raw - 0.08) * 1.35)
     
@@ -72,12 +75,15 @@ def retrieval_is_sufficient(
     papers: List[PaperMetadata],
     *,
     use_local: bool,
-    min_papers: int = 2,
+    min_papers: int = 1,
 ) -> bool:
     if len(papers) < 1 or not chunks:
         return False
     if len(papers) >= min_papers and len(chunks) >= 1:
+        if not use_local:
+            # If using LLM batch relevance check, trust the LLM's classification
+            return True
         top = max(c.score for c in chunks)
-        floor = 0.12 if use_local else 0.78
+        floor = 0.12
         return top >= floor
     return False

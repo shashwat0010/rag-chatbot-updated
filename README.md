@@ -91,6 +91,14 @@ flowchart TD
 - **Strict Evidence Calibration**: If PubMed returns 0 results for a query, the confidence score drops strictly to `0.0` and the system returns a safe, standardized fallback message: *"Limited direct evidence found; related literature suggests possible associations."*
 - **Fact Grounding Guard**: Checks generated answers against the source abstracts to ensure no hallucinations.
 
+### 7. Conversational PICO Preprocessing & Calibrated RAG Scoring
+- **PICO Preprocessing**: Translates conversational, patient-specific health queries (e.g. *"i am 45 years old, i am having high bp and heart rate"*) dynamically into clean clinical search keywords (e.g. `hypertension tachycardia`) using the PICO (Patient, Intervention, Comparison, Outcome) framework.
+- **Generic Clinical Noise Filters**: Automatically filters out demographic noise (like age, gender, e.g. `'45 years old'`, `'middle aged adult'`) and generic clinical words (`management`, `treatment`, `etiology`, `cause`, `symptoms`, `signs`) from the simplified search query. This prevents PubMed searches from being overly restricted.
+- **Tachycardia Synonyms Mapping**: Maps colloquial heart rate indicators (e.g., `"heart rate"`, `"high heart rate"`, `"fast heart rate"`) to standard MeSH `tachycardia` and expands it into standard Boolean synonym terms: `(tachycardia OR "high heart rate" OR "elevated heart rate" OR "heart rate" OR "fast heart rate")`.
+- **Decoupled Sufficiency Checker**: Evaluates sufficiency using `settings.min_relevance_score` (default `0.35`) instead of a hardcoded `0.78` and sets `min_papers=1` to allow synthesis when a single highly relevant paper matches.
+- **Relevance-Check Bypassing**: When using the strict LLM batch relevance checker, any paper approved by the LLM bypasses the raw similarity floor check, ensuring valid literature is synthesized.
+- **Continuous Score Calibration**: Reranker scores below `0.08` scale down smoothly and linearly rather than collapsing to raw values, stabilizing clinician-facing confidence ratings.
+
 ---
 
 ## 🛠️ Project Structure

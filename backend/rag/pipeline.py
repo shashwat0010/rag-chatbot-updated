@@ -71,11 +71,17 @@ class RAGPipeline:
                 sources_searched=[],
             )
 
-        # 1. Preprocess: Normalize terms and expand with synonyms & Boolean operators
-        expanded_query, inferred_diseases = expand_query(query)
-        normalized_query = normalize_query(query)
+        # 1. Preprocess: Translate conversational query to medical keywords using PICO framework
+        from services.relevance import translate_query_pico
+        pico_data = await translate_query_pico(query)
+        translated_query = pico_data.get("simplified_search_query", query)
+        inferred_diseases = pico_data.get("inferred_diseases", [])
+        
+        expanded_query, _ = expand_query(translated_query)
+        normalized_query = normalize_query(translated_query)
         
         logger.info("Raw query: %s", query)
+        logger.info("PICO translated query: %s", translated_query)
         logger.info("Normalized query: %s", normalized_query)
         if inferred_diseases:
             logger.info("Inferred diseases: %s", ", ".join(inferred_diseases))

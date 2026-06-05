@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 
 @retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1.5, min=2, max=8),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=3, max=15),
     reraise=True
 )
 async def _call_llm_with_retry(llm: ChatMistralAI, messages: list) -> any:
