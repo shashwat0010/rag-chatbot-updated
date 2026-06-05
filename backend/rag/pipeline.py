@@ -128,7 +128,41 @@ class RAGPipeline:
                     hybrid_chunks.sort(key=lambda c: c.score, reverse=True)
                 else:
                     logger.warning("Skipped reranking. Falling back to FAISS/BM25 scores.")
+
+            # Filter candidates through strict medical relevance checker
+            if hybrid_chunks:
+                # 1. Identify the top 5 unique papers to check in a batch
+                unique_papers = []
+                seen_pmids = set()
+                for chunk in hybrid_chunks:
+                    p = chunk.paper
+                    if p.pmid not in seen_pmids:
+                        seen_pmids.add(p.pmid)
+                        unique_papers.append(p)
+                        if len(unique_papers) >= 5:
+                            break
+
+                # 2. Call batch relevance check in a single LLM request
+                from services.relevance import check_papers_relevance_batch
+                batch_results = await check_papers_relevance_batch(normalized_query, unique_papers)
                 
+                # 3. Build relevance map
+                relevance_map = {}  # pmid -> bool
+                for pmid, (is_rel, reason) in batch_results.items():
+                    relevance_map[pmid] = is_rel
+                    if not is_rel:
+                        logger.info("Paper PMID %s rejected: %s", pmid, reason)
+
+                # Filter both the retrieved chunks and the original papers list
+                filtered_hybrid_chunks = []
+                for chunk in hybrid_chunks:
+                    pmid = chunk.paper.pmid
+                    if relevance_map.get(pmid, False):
+                        filtered_hybrid_chunks.append(chunk)
+                
+                hybrid_chunks = filtered_hybrid_chunks
+                papers = [p for p in papers if relevance_map.get(p.pmid, False)]
+
             chunks = hybrid_chunks[:settings.pubmed_retrieval_top_k]
             
         except (OpenAIQuotaError, EmbeddingServiceError) as exc:

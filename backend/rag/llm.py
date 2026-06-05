@@ -5,6 +5,7 @@ from typing import List, Tuple
 
 from langchain_mistralai import ChatMistralAI
 from langchain_core.messages import HumanMessage, SystemMessage
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
 from rag.formatting import format_structured_answer, paragraph_to_bullets
@@ -12,6 +13,17 @@ from rag.vector_store import RetrievedChunk
 from services.guardrails import INSUFFICIENT_EVIDENCE_MESSAGE, is_greeting_or_meta
 
 logger = logging.getLogger(__name__)
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1.5, min=2, max=8),
+    reraise=True
+)
+async def _call_llm_with_retry(llm: ChatMistralAI, messages: list) -> any:
+    """Invoke the LLM with automatic retry on transient errors (like 429 rate limits)."""
+    return await llm.ainvoke(messages)
+
 
 GREETING_RESPONSE = """{
   "summary": "Hello! I am your Medical Research Assistant.",
@@ -151,7 +163,7 @@ Respond with structured JSON only (bullets, no paragraphs)."""
             SystemMessage(content=SYSTEM_PROMPT),
             HumanMessage(content=user_prompt),
         ]
-        response = await self._llm.ainvoke(messages)
+        response = await _call_llm_with_retry(self._llm, messages)
         raw = response.content if isinstance(response.content, str) else str(response.content)
 
         try:
