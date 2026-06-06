@@ -6,6 +6,9 @@ An AI-powered medical research assistant designed for clinicians and researchers
 
 **Live Demo:** [https://medi-chat-an1i.vercel.app/](https://medi-chat-an1i.vercel.app/)
 
+> [!WARNING]
+> **Free-Tier Reranker Limitation**: The live demo is hosted on a resource-constrained free cloud tier. To avoid Out-of-Memory crashes, the deep semantic **Cross-Encoder reranking model is disabled** in the live demo, which may reduce the accuracy of multi-concept queries. For full accuracy and the complete RAG experience, **running the app locally is recommended**.
+
 ---
 
 ## 🏗️ System Architecture
@@ -197,6 +200,6 @@ npm run dev
 ## 🛡️ Production Deployment (e.g., Render)
 
 The backend is configured to support memory constraints out-of-the-box:
-1. **Dynamic Reranking**: If deployed on a Render free tier containing only `512MB` of RAM, the system will detect that memory usage exceeds the safety threshold (`95%`) and bypass the heavy Cross-Encoder execution, ensuring high availability and zero OOM crashes.
+1. **Dynamic Reranking**: If deployed on a Render free tier containing only `512MB` of RAM, the system will detect that memory usage exceeds the safety threshold (`95%`) and bypass the heavy Cross-Encoder execution, ensuring high availability and zero OOM crashes. **Note: Bypassing the reranker in resource-constrained environments may reduce query precision. Run locally to ensure maximum semantic relevance.**
 2. **Docker Setup**: A `Dockerfile` is provided in both backend and frontend directories for containerized hosting.
 3. **CORS / Domain Security**: Ensure `CORS_ORIGINS` in your production environment variables points exactly to your frontend domain.
