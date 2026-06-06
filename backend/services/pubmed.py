@@ -59,7 +59,9 @@ FALLBACK_IGNORED = {
     "clinical", "trial", "outcomes", "outcome", "patients", "patient", "versus", "vs",
     "evidence", "based", "association", "associations", "associated", "relationship",
     "relationships", "link", "links", "correlation", "correlations", "role", "roles",
-    "impact", "impacts"
+    "impact", "impacts", "specifically", "focusing", "focus", "particular", "particularly",
+    "rates", "rate", "focuses", "focused", "detail", "details", "analysis", "analyses",
+    "study", "studies", "evaluation", "evaluations", "assessment", "assessments", "review", "reviews"
 }
 
 
@@ -201,12 +203,22 @@ async def search_pubmed(
     simplified = _simplify_query_for_pubmed(query)
 
     fallback_base = raw_query or query
+    fallback_query = _make_fallback_query(fallback_base)
+    fallback_words = fallback_query.split()
+
     # Try progressively broader strategies (long questions often fail strict filters)
     search_terms = [
         f"({simplified}) AND (systematic review[pt] OR meta-analysis[pt] OR randomized controlled trial[pt] OR review[pt])",
         simplified,
-        _make_fallback_query(fallback_base),  # clean keyword-only fallback query
+        fallback_query,
     ]
+    
+    # Append truncated fallback queries if they are progressively broader
+    if len(fallback_words) > 5:
+        search_terms.append(" ".join(fallback_words[:5]))
+    if len(fallback_words) > 3:
+        search_terms.append(" ".join(fallback_words[:3]))
+
     # Deduplicate while preserving order
     seen_terms: set[str] = set()
     unique_terms: List[str] = []
