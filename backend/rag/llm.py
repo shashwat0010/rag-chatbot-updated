@@ -25,6 +25,31 @@ async def _call_llm_with_retry(llm: ChatMistralAI, messages: list) -> any:
     return await llm.ainvoke(messages)
 
 
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=3, max=15),
+    reraise=True
+)
+async def _get_llm_stream_with_retry(llm: ChatMistralAI, messages: list):
+    """Call astream and wait for the first chunk with retry to handle initial connection 429s."""
+    stream = llm.astream(messages)
+    try:
+        iterator = stream.__aiter__()
+        first_chunk = await iterator.__anext__()
+    except StopAsyncIteration:
+        async def empty_gen():
+            if False:
+                yield None
+        return empty_gen()
+    
+    async def yield_all():
+        yield first_chunk
+        async for chunk in iterator:
+            yield chunk
+
+    return yield_all()
+
+
 GREETING_RESPONSE = """{
   "summary": "Hello! I am your Medical Research Assistant.",
   "key_findings": [
@@ -69,6 +94,22 @@ Output valid JSON only:
   "cited_indices": [1, 2],
   "insufficient_evidence": false
 }
+"""
+
+STREAM_SYSTEM_PROMPT = """You are a medical research assistant for licensed clinicians.
+Answer ONLY from the provided PubMed abstract excerpts.
+
+If the user query is a greeting like 'hi' or 'hello', or asks who you are, provide a friendly professional introduction about your capabilities.
+
+Formatting rules (strict):
+- Use Markdown structure.
+- Output a section starting with **Summary:** containing a one-sentence takeaway (max 35 words).
+- Output a section starting with **Key findings:** followed by bullet points (one finding per line). Put each distinct finding on its own bullet. Include citation markers like [1], [2] on each bullet.
+- Output an optional section starting with **Clinical notes:** followed by bullet points for limitations or cautions.
+- Do NOT output JSON, HTML, or code blocks. Output Markdown directly.
+- If the sources are inadequate to answer, write exactly: "Current evidence is insufficient to provide a reliable answer."
+- Use cautious language (may, suggests, limited evidence).
+- No personal medical advice or emergency instructions.
 """
 
 
@@ -179,3 +220,40 @@ Respond with structured JSON only (bullets, no paragraphs)."""
             if "insufficient" in raw.lower():
                 return INSUFFICIENT_EVIDENCE_MESSAGE, [], True
             return paragraph_to_bullets(raw[:800]), [], False
+
+    async def generate_stream(
+        self,
+        query: str,
+        chunks: List[RetrievedChunk],
+    ):
+        if is_greeting_or_meta(query) and not chunks:
+            import asyncio
+            parsed = json.loads(GREETING_RESPONSE)
+            text = _build_answer_from_parsed(parsed)
+            # Yield in smaller chunks to simulate streaming for a better UI experience
+            words = text.split(" ")
+            for w in words:
+                yield w + " "
+                await asyncio.sleep(0.02)
+            return
+
+        if not chunks:
+            yield INSUFFICIENT_EVIDENCE_MESSAGE
+            return
+
+        context = _format_context(chunks)
+        user_prompt = f"""Question: {query}
+
+Sources:
+{context}
+
+Respond in Markdown format (Summary, Key findings, and Clinical notes sections with bullet points). Include citations [1], [2], etc. directly on findings."""
+
+        messages = [
+            SystemMessage(content=STREAM_SYSTEM_PROMPT),
+            HumanMessage(content=user_prompt),
+        ]
+        
+        stream = await _get_llm_stream_with_retry(self._llm, messages)
+        async for chunk in stream:
+            yield chunk.content

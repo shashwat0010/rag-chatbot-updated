@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ResponseCard } from "@/components/chat/ResponseCard";
-import { checkHealth, queryMedicalResearch, type QueryResponse } from "@/lib/api";
+import { checkHealth, queryMedicalResearch, queryMedicalResearchStream, type QueryResponse } from "@/lib/api";
 
 interface Message {
   id: string;
@@ -57,32 +57,87 @@ export function ChatInterface() {
       role: "user",
       content: query,
     };
-    setMessages((prev) => [...prev, userMsg]);
+
+    const assistantMsgId = crypto.randomUUID();
+    const initialAssistantMsg: Message = {
+      id: assistantMsgId,
+      role: "assistant",
+      query,
+      response: {
+        answer: "",
+        citations: [],
+        confidence_note: "Searching PubMed and analyzing literature...",
+        confidence_score: 0.0,
+        insufficient_evidence: false,
+        sources_searched: ["PubMed"],
+      },
+    };
+    
+    setMessages((prev) => [...prev, userMsg, initialAssistantMsg]);
     setInput("");
     setLoading(true);
 
     try {
-      const response = await queryMedicalResearch(query);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          query,
-          response,
+      await queryMedicalResearchStream(
+        query,
+        (token) => {
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (msg.id === assistantMsgId && msg.response) {
+                return {
+                  ...msg,
+                  response: {
+                    ...msg.response,
+                    answer: msg.response.answer + token,
+                  },
+                };
+              }
+              return msg;
+            })
+          );
         },
-      ]);
+        (metadata) => {
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (msg.id === assistantMsgId) {
+                return {
+                  ...msg,
+                  response: metadata,
+                };
+              }
+              return msg;
+            })
+          );
+        },
+        (errorMsg) => {
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (msg.id === assistantMsgId) {
+                return {
+                  ...msg,
+                  response: undefined,
+                  error: errorMsg,
+                };
+              }
+              return msg;
+            })
+          );
+        }
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Something went wrong";
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          query,
-          error: message,
-        },
-      ]);
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.id === assistantMsgId) {
+            return {
+              ...msg,
+              response: undefined,
+              error: message,
+            };
+          }
+          return msg;
+        })
+      );
     } finally {
       setLoading(false);
     }

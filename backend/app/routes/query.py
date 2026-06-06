@@ -1,6 +1,8 @@
 import logging
+import json
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 import httpx
 
 from app.config import get_settings
@@ -97,4 +99,57 @@ async def query_medical_research(
         raise HTTPException(
             status_code=500,
             detail="An error occurred while processing your research query. Please try again.",
+        ) from exc
+
+
+@router.post("/query/stream")
+@limiter.limit(_rate_limit)
+async def query_medical_research_stream(
+    request: Request,
+    body: QueryRequest,
+) -> StreamingResponse:
+    settings = get_settings()
+    if not settings.mistral_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Mistral API key is not configured. Set MISTRAL_API_KEY in the environment.",
+        )
+
+    safety = await check_query_safety(body.query, settings.block_emergency_keywords)
+    if not safety.allowed:
+        if safety.risk_level in ("NON_MEDICAL", "PATIENT_SPECIFIC"):
+            async def error_generator():
+                refusal_msg = safety.message
+                yield f"event: token\ndata: {json.dumps(refusal_msg)}\n\n"
+                metadata = {
+                    "citations": [],
+                    "confidence_note": f"Policy Check: {safety.message}",
+                    "confidence_score": 0.0,
+                    "insufficient_evidence": False,
+                    "sources_searched": [],
+                    "confidence_label": "Scope Refusal"
+                }
+                yield f"event: metadata\ndata: {json.dumps(metadata)}\n\n"
+                yield "event: done\ndata: [DONE]\n\n"
+            return StreamingResponse(error_generator(), media_type="text/event-stream")
+            
+        if not is_greeting_or_meta(body.query):
+            raise HTTPException(status_code=400, detail=safety.message)
+
+    logger.info("Streaming query from %s: %s", request.client.host if request.client else "unknown", body.query[:100])
+
+    try:
+        pipeline = get_pipeline()
+        generator = pipeline.run_stream(
+            body.query,
+            max_papers=body.max_papers,
+            risk_level=safety.risk_level,
+            analysis=safety
+        )
+        return StreamingResponse(generator, media_type="text/event-stream")
+    except Exception as exc:
+        logger.exception("Streaming query processing failed")
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while processing your streaming research query. Please try again.",
         ) from exc
