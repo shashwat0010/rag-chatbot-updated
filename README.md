@@ -17,17 +17,16 @@ flowchart TD
     User([Clinician Query]) --> UI[Next.js Frontend]
     UI --> API[FastAPI Backend]
     
-    subgraph "1. Guardrails & Classification"
-        API --> Guard[LLM Scope Classifier & Keyword Blockers]
+    subgraph "1. Unified Query Analysis"
+        API --> Guard[LLM Unified Classifier: Category, Intent, PICO, Diseases & Synonyms]
     end
     
-    subgraph "2. Query Processing"
-        Guard --> Normalizer[Casual-to-Medical Normalizer]
-        Normalizer --> Expansion[Synonym & Disease Boolean Expansion]
+    subgraph "2. Dynamic Search Assembly"
+        Guard --> Assembler[Dynamic Boolean Query Builder]
     end
     
     subgraph "3. Dynamic Retrieval"
-        Expansion --> PubMed[PubMed E-Utilities API]
+        Assembler --> PubMed[PubMed E-Utilities API]
         PubMed --> Scraper[Abstract Scraper & Chunker]
     end
     
@@ -57,17 +56,20 @@ flowchart TD
 
 ## 🚀 Key Features & Detailed Pipeline Explanation
 
-### 1. Medical Scope Classification & Safety Guardrails
-- **Emergency Keywords**: Fast regex checks block high-risk terms (e.g., "suicide", "stroke symptoms", "heart attack") and prompt the user to seek immediate emergency care.
-- **LLM Scope Classifier**: Incoming queries are processed by a Mistral scope classifier to categorize them into:
-  - `GREETING`: Greetings or general assistant information.
-  - `MEDICAL_IN_SCOPE`: Scientific, clinical, and conceptual questions.
-  - `PATIENT_SPECIFIC`: Personal diagnostic or treatment questions. These are allowed but returned with an auto-appended patient disclaimer.
-  - `NON_MEDICAL`: General questions (e.g., weather, stocks). These are refused with a polite out-of-scope notice.
+### 1. Unified Query Analysis & Safety Classifier
+- **Fast Local Filters**: Simple greetings and emergency patterns are checked instantly via regular expressions to minimize server latency and API token consumption.
+- **LLM Unified Analyzer**: Clinical queries are passed to a single, structured Mistral LLM request that dynamically analyzes:
+  - `category`: Classifies into `GREETING`, `MEDICAL_IN_SCOPE`, `PATIENT_SPECIFIC` (allowed with patient disclaimers), or `NON_MEDICAL` (blocked).
+  - `is_emergency`: Flags immediate, acute life-threatening situations (e.g. cardiac arrest, active chest pain, suicide risk). Sub-acute symptoms (e.g., three-day headache, blurry vision, high blood pressure) are permitted to enable clinical research checks.
+  - `is_high_risk`: Identifies proposals to stop vital treatments (e.g., stop insulin or replace chemotherapy).
+  - `clinical_focus`: Categorizes question intent into `treatment`, `diagnosis`, `mechanism_of_action`, `prognosis`, or `general`.
+  - `pico_analysis` & `simplified_search_query`: Generates clinically normalized keywords, removing conversational filler, demographics (age/gender), and generic verbs.
+  - `inferred_diseases` & `synonym_expansion`: Performs clinical reasoning to output inferred underlying conditions and dynamic, concept-specific synonym lists.
 
-### 2. Query Preprocessing & Boolean Expansion
-- **Casual-to-Medical Normalization**: Converts casual health vocabulary to standard clinical terminology (e.g., `"kidney pain"` ➔ `"nephropathy"`, `"high sugar"` ➔ `"hyperglycemia"`).
-- **Boolean Expansion**: Automatically pulls synonym groups and joins them using Boolean operators (e.g., `(hyperglycemia OR "high sugar" OR "high glucose")`) to maximize PubMed search coverage.
+### 2. Dynamic Synonym & Disease Boolean Expansion
+- **Dynamic Synonym Mapping**: Eliminates all hardcoded translation dictionaries. Synonym lists are generated dynamically by the LLM based on its medical knowledge.
+- **Smart Boolean Expansion**: Programmatically constructs the PubMed query. The concepts are combined with `AND`, and synonyms are grouped with `OR`.
+- **Differential Disease OR Grouping**: Inferred diseases are grouped under a single `OR` clause (e.g., `AND ("Pheochromocytoma" OR "Hyperthyroidism" OR "Anxiety")`) instead of separate `AND` clauses. This prevents the search query from becoming overly restrictive and ensures PubMed returns valid matching literature.
 
 ### 3. Dynamic PubMed Retrieval & Smart Simplification
 - **Progressive PubMed Search**: PubMed search is executed using E-utilities. If a long, complex clinical query is submitted, strict filters may fail. The system tries progressively broader strategies:
@@ -91,10 +93,7 @@ flowchart TD
 - **Strict Evidence Calibration**: If PubMed returns 0 results for a query, the confidence score drops strictly to `0.0` and the system returns a safe, standardized fallback message: *"Limited direct evidence found; related literature suggests possible associations."*
 - **Fact Grounding Guard**: Checks generated answers against the source abstracts to ensure no hallucinations.
 
-### 7. Conversational PICO Preprocessing & Calibrated RAG Scoring
-- **PICO Preprocessing**: Translates conversational, patient-specific health queries (e.g. *"i am 45 years old, i am having high bp and heart rate"*) dynamically into clean clinical search keywords (e.g. `hypertension tachycardia`) using the PICO (Patient, Intervention, Comparison, Outcome) framework.
-- **Generic Clinical Noise Filters**: Automatically filters out demographic noise (like age, gender, e.g. `'45 years old'`, `'middle aged adult'`) and generic clinical words (`management`, `treatment`, `etiology`, `cause`, `symptoms`, `signs`) from the simplified search query. This prevents PubMed searches from being overly restricted.
-- **Tachycardia Synonyms Mapping**: Maps colloquial heart rate indicators (e.g., `"heart rate"`, `"high heart rate"`, `"fast heart rate"`) to standard MeSH `tachycardia` and expands it into standard Boolean synonym terms: `(tachycardia OR "high heart rate" OR "elevated heart rate" OR "heart rate" OR "fast heart rate")`.
+### 7. Dynamic RAG Scoring & Calibration
 - **Decoupled Sufficiency Checker**: Evaluates sufficiency using `settings.min_relevance_score` (default `0.35`) instead of a hardcoded `0.78` and sets `min_papers=1` to allow synthesis when a single highly relevant paper matches.
 - **Relevance-Check Bypassing**: When using the strict LLM batch relevance checker, any paper approved by the LLM bypasses the raw similarity floor check, ensuring valid literature is synthesized.
 - **Continuous Score Calibration**: Reranker scores below `0.08` scale down smoothly and linearly rather than collapsing to raw values, stabilizing clinician-facing confidence ratings.
