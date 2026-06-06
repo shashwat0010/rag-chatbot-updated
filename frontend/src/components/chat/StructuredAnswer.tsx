@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
  * Renders backend markdown-lite answers: **Section:** headers and - bullets.
  */
 export function StructuredAnswer({ text }: { text: string }) {
+  if (!text) return null;
   const lines = text.split("\n");
 
   if (lines.length === 1 && !lines[0].startsWith("**") && !lines[0].startsWith("- ")) {

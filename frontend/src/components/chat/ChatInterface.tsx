@@ -102,7 +102,10 @@ export function ChatInterface() {
               if (msg.id === assistantMsgId) {
                 return {
                   ...msg,
-                  response: metadata,
+                  response: {
+                    ...msg.response,
+                    ...metadata,
+                  } as QueryResponse,
                 };
               }
               return msg;
