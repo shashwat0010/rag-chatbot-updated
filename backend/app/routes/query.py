@@ -63,7 +63,12 @@ async def query_medical_research(
     logger.info("Query from %s: %s", request.client.host if request.client else "unknown", body.query[:100])
 
     try:
-        result = await get_pipeline().run(body.query, max_papers=body.max_papers, risk_level=safety.risk_level)
+        result = await get_pipeline().run(
+            body.query,
+            max_papers=body.max_papers,
+            risk_level=safety.risk_level,
+            analysis=safety
+        )
         if not result.confidence_note.startswith("Low confidence"):
             result.confidence_note = f"{result.confidence_note} {DISCLAIMER}"
         return result

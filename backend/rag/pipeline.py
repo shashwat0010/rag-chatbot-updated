@@ -13,9 +13,8 @@ from rag.scoring import compute_retrieval_confidence, retrieval_is_sufficient
 from rag.vector_store import FAISSVectorStore, RetrievedChunk
 from services.embeddings import EmbeddingServiceError, OpenAIQuotaError
 from rag.formatting import paragraph_to_bullets
-from services.guardrails import validate_answer_grounding, is_greeting_or_meta
+from services.guardrails import validate_answer_grounding, is_greeting_or_meta, check_query_safety, QueryAnalysisResult
 from services.pubmed import prioritize_trusted_journals, search_pubmed
-from rag.query_preprocessor import normalize_query, expand_query
 from rag.response_generator import generate_response
 from rag.query_quality import assess_query_quality
 from services.reranker import get_reranker
@@ -34,7 +33,7 @@ class RAGPipeline:
             self._llm = MedicalLLM()
         return self._llm
 
-    async def run(self, query: str, max_papers: Optional[int] = None, risk_level: str = "LOW") -> QueryResponse:
+    async def run(self, query: str, max_papers: Optional[int] = None, risk_level: str = "LOW", analysis: Optional[QueryAnalysisResult] = None) -> QueryResponse:
         settings = get_settings()
 
         # Clean query by stripping outer quotes and whitespace
@@ -71,21 +70,23 @@ class RAGPipeline:
                 sources_searched=[],
             )
 
-        # 1. Preprocess: Translate conversational query to medical keywords using PICO framework
-        from services.relevance import translate_query_pico
-        pico_data = await translate_query_pico(query)
-        translated_query = pico_data.get("simplified_search_query", query)
-        inferred_diseases = pico_data.get("inferred_diseases", [])
+        # 1. Preprocess: Get or generate query analysis dynamically
+        if analysis is None:
+            analysis = await check_query_safety(query, block_emergency=False)
+            
+        translated_query = analysis.simplified_search_query or query
+        inferred_diseases = analysis.inferred_diseases
         
-        expanded_query, _ = expand_query(translated_query)
-        normalized_query = normalize_query(translated_query)
+        # Build Boolean search query and normalized query dynamically
+        expanded_query = self._build_dynamic_boolean_query(translated_query, analysis.synonym_expansion, inferred_diseases)
+        normalized_query = translated_query
         
         logger.info("Raw query: %s", query)
-        logger.info("PICO translated query: %s", translated_query)
+        logger.info("Dynamic translated query: %s", translated_query)
         logger.info("Normalized query: %s", normalized_query)
         if inferred_diseases:
-            logger.info("Inferred diseases: %s", ", ".join(inferred_diseases))
-        logger.info("Expanded PubMed query: %s", expanded_query)
+            logger.info("Dynamic inferred diseases: %s", ", ".join(inferred_diseases))
+        logger.info("Dynamic expanded PubMed query: %s", expanded_query)
 
         # 2. Search PubMed using the high-quality Boolean expanded query
         papers = await search_pubmed(expanded_query, max_results=max_papers, raw_query=query)
@@ -294,3 +295,62 @@ class RAGPipeline:
                 )
             )
         return citations
+
+    @staticmethod
+    def _build_dynamic_boolean_query(
+        simplified_query: str,
+        synonym_expansion: dict,
+        inferred_diseases: List[str]
+    ) -> str:
+        # Clean up input keywords
+        keywords = [kw.strip() for kw in simplified_query.split() if kw.strip()]
+        if not keywords:
+            return simplified_query
+
+        concept_groups = []
+        for kw in keywords:
+            # Check for synonyms dynamically from the LLM dictionary
+            syns = synonym_expansion.get(kw, [])
+            # Make sure keys are matched case-insensitively
+            if not syns:
+                for key, val in synonym_expansion.items():
+                    if key.lower() == kw.lower():
+                        syns = val
+                        break
+            
+            # Ensure the keyword itself is in the synonyms list
+            if kw not in syns:
+                # Avoid inserting a duplicate that is case-insensitive-only
+                if not any(s.lower() == kw.lower() for s in syns):
+                    syns = [kw] + syns
+            
+            # format synonyms: wrap in double quotes if it contains spaces
+            formatted = [f'"{s}"' if " " in s else s for s in syns]
+            concept_groups.append("(" + " OR ".join(formatted) + ")")
+
+        disease_terms = []
+        for disease in inferred_diseases:
+            # Check if this disease is already represented in search keywords to avoid redundant groups
+            disease_lower = disease.lower()
+            if any(disease_lower == kw.lower() for kw in keywords):
+                continue
+                
+            syns = synonym_expansion.get(disease, [])
+            if not syns:
+                for key, val in synonym_expansion.items():
+                    if key.lower() == disease_lower:
+                        syns = val
+                        break
+            if disease not in syns:
+                if not any(s.lower() == disease_lower for s in syns):
+                    syns = [disease] + syns
+            formatted = [f'"{s}"' if " " in s else s for s in syns]
+            disease_terms.extend(formatted)
+
+        if disease_terms:
+            concept_groups.append("(" + " OR ".join(disease_terms) + ")")
+
+        if not concept_groups:
+            return simplified_query
+
+        return " AND ".join(concept_groups)

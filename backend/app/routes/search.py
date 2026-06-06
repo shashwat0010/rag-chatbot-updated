@@ -30,7 +30,8 @@ async def search_papers(
     )
 
     try:
-        papers = await search_pubmed(body.query, max_results=body.max_results)
+        search_term = safety.simplified_search_query or body.query
+        papers = await search_pubmed(search_term, max_results=body.max_results)
         papers = prioritize_trusted_journals(papers)
         return SearchPapersResponse(
             papers=papers,
