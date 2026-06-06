@@ -1,4 +1,9 @@
 import httpx
+import sys
+
+# Reconfigure stdout to support UTF-8 on Windows consoles to prevent charmap encoding errors
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 URL = "http://127.0.0.1:8080/query"
 QUERY = 'Meta-analysis evidence for the efficacy of vitamin D supplementation in preventing falls in elderly populations."'

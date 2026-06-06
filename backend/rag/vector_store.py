@@ -1,4 +1,5 @@
 import logging
+import re
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -24,20 +25,69 @@ class RetrievedChunk:
 def _paper_to_chunks(paper: PaperMetadata) -> List[str]:
     header = f"Title: {paper.title}\nJournal: {paper.journal}\nYear: {paper.year or 'N/A'}\n"
     body = paper.abstract or ""
-    full = header + body
-    # Split long abstracts into ~800 char chunks with overlap
+    full_text = header + body
+    
     max_len = 800
     overlap = 100
-    if len(full) <= max_len:
-        return [full]
+    
+    if len(full_text) <= max_len:
+        return [full_text]
+        
     chunks: List[str] = []
-    start = 0
-    while start < len(full):
-        end = min(start + max_len, len(full))
-        chunks.append(full[start:end])
-        if end >= len(full):
-            break
-        start = end - overlap
+    
+    # Split the text on sentence boundaries: periods, question marks, or exclamation marks followed by spaces/newlines
+    sentence_endings = re.compile(r'(?<=[.?!])\s+')
+    sentences = sentence_endings.split(full_text)
+    
+    current_chunk = []
+    current_len = 0
+    
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        sentence_len = len(sentence)
+        
+        # If adding this sentence exceeds max_len
+        if current_len + sentence_len + 1 > max_len:
+            if current_chunk:
+                # Flush the current chunk
+                chunk_str = " ".join(current_chunk)
+                chunks.append(chunk_str)
+                
+                # Slide window overlap: keep sentences at the end of the previous chunk that fit within the overlap size
+                overlap_chunk = []
+                overlap_len = 0
+                for s in reversed(current_chunk):
+                    if overlap_len + len(s) + 1 <= overlap:
+                        overlap_chunk.insert(0, s)
+                        overlap_len += len(s) + 1
+                    else:
+                        break
+                current_chunk = overlap_chunk
+                current_len = overlap_len
+            
+            # If a single sentence exceeds max_len, fall back to character split for that sentence
+            if sentence_len > max_len:
+                start = 0
+                while start < sentence_len:
+                    end = min(start + max_len, sentence_len)
+                    chunks.append(sentence[start:end])
+                    if end >= sentence_len:
+                        break
+                    start = end - overlap
+                current_chunk = []
+                current_len = 0
+            else:
+                current_chunk.append(sentence)
+                current_len = sentence_len
+        else:
+            current_chunk.append(sentence)
+            current_len += sentence_len + 1
+            
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+        
     return chunks
 
 

@@ -13,8 +13,8 @@ def is_gibberish(word: str) -> bool:
         if re.search(p, word, re.IGNORECASE):
             return True
             
-    # Check for no vowels in a word longer than 3 characters
-    if len(word) > 3 and not re.search(r'[aeiouy]', word, re.IGNORECASE):
+    # Check for no vowels in a word longer than 3 characters that contains letters
+    if len(word) > 3 and re.search(r'[a-zA-Z]', word) and not re.search(r'[aeiouy]', word, re.IGNORECASE):
         return True
         
     return False

@@ -6,8 +6,18 @@ from typing import Optional, Tuple, Dict, List
 
 from langchain_core.messages import HumanMessage
 from langchain_mistralai import ChatMistralAI
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
+
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=3, max=15),
+    reraise=True
+)
+async def _call_llm_with_retry(llm: ChatMistralAI, messages: list) -> any:
+    """Invoke the LLM with automatic retry on transient errors (like 429 rate limits)."""
+    return await llm.ainvoke(messages)
 
 logger = logging.getLogger(__name__)
 
@@ -126,9 +136,6 @@ async def check_query_safety(query: str, block_emergency: bool = True) -> QueryA
         prompt = f"""You are a medical query analyzer and safety classifier.
 Analyze the user query below and provide safety classifications, clinical intent, a PICO framework breakdown, optimized PubMed search terms, and dynamic synonyms.
 
-User Query:
-{query}
-
 Instructions:
 1. Classify safety and category:
    - "category": Choose one of:
@@ -147,13 +154,13 @@ Instructions:
 4. Normalized & Simplified search keywords:
    - "simplified_search_query": A simple, keyword-focused PubMed search query. Map all colloquial/casual symptoms and terms to standard medical terminology (e.g., "high blood pressure" -> "hypertension", "fast heart rate" -> "tachycardia", "high sugar" -> "hyperglycemia" or "diabetes").
    - Restrict this ONLY to core medical symptoms, clinical conditions, or therapeutic agents (max 3-5 terms separated by spaces).
-   - Do NOT include demographics (such as age, gender, e.g. "45 years old"), verbs, or generic clinical words (e.g. "treatment", "management", "diagnosis", "cause", "patient").
+   - Do NOT include demographics (such as age, gender, e.g. "45 years old"), verbs, or generic clinical words (e.g. "treatment", "management", "diagnosis", "cause", "patient", "what", "is", "considered", "fixes").
 
 5. Inferred conditions:
    - "inferred_diseases": A list of at most 1-2 most likely primary underlying medical conditions/diseases inferred from the patient's symptoms (e.g., if symptoms are polyuria and polydipsia, list ["Type 2 Diabetes"]). Avoid listing broad differential diagnoses or multiple alternative conditions.
 
 6. Synonym expansion:
-   - "synonym_expansion": A JSON dictionary mapping each medical keyword in "simplified_search_query" and each inferred disease in "inferred_diseases" to a list of 2-4 alternative medical synonyms or related MeSH terms. For example, for "hypertension", map to ["hypertension", "high blood pressure", "elevated blood pressure"].
+   - "synonym_expansion": A JSON dictionary mapping each medical keyword in "simplified_search_query" and each inferred disease in "inferred_diseases" to a list of 2-4 alternative medical synonyms or related MeSH terms.
 
 Output valid JSON only with this structure:
 {{
@@ -174,9 +181,81 @@ Output valid JSON only with this structure:
     "term2": ["syn1", "syn2", ...]
   }}
 }}
+
+Examples:
+Query: My blood pressure was 150/95 at home. Is that considered high? What medication usually fixes that?
+Response:
+{{
+  "category": "PATIENT_SPECIFIC",
+  "is_emergency": false,
+  "is_high_risk": false,
+  "clinical_focus": "treatment",
+  "pico_analysis": {{
+    "patient_problem": "high blood pressure (150/95)",
+    "intervention": "antihypertensive medication",
+    "comparison": "none",
+    "outcome": "blood pressure control"
+  }},
+  "simplified_search_query": "hypertension",
+  "inferred_diseases": ["Hypertension"],
+  "synonym_expansion": {{
+    "hypertension": ["hypertension", "high blood pressure", "elevated blood pressure"],
+    "Hypertension": ["hypertension", "high blood pressure", "elevated blood pressure"]
+  }}
+}}
+
+Query: I've had a headache for three days and my vision is a bit blurry. Is this something I need to worry about?
+Response:
+{{
+  "category": "PATIENT_SPECIFIC",
+  "is_emergency": false,
+  "is_high_risk": false,
+  "clinical_focus": "diagnosis",
+  "pico_analysis": {{
+    "patient_problem": "persistent headache and blurred vision",
+    "intervention": "none",
+    "comparison": "none",
+    "outcome": "diagnosis or risk assessment"
+  }},
+  "simplified_search_query": "headache blurred vision persistent",
+  "inferred_diseases": ["Migraine with aura", "Idiopathic intracranial hypertension"],
+  "synonym_expansion": {{
+    "headache": ["headache", "cephalalgia", "head pain", "migraine"],
+    "blurred vision": ["blurred vision", "visual disturbance", "blurry vision"],
+    "persistent": ["persistent", "prolonged", "chronic"],
+    "Migraine with aura": ["Migraine with aura", "classic migraine", "migraine with visual aura"],
+    "Idiopathic intracranial hypertension": ["Idiopathic intracranial hypertension", "IIH", "pseudotumor cerebri"]
+  }}
+}}
+
+Query: i am 45 years old, i am having high bp and heart rate
+Response:
+{{
+  "category": "PATIENT_SPECIFIC",
+  "is_emergency": false,
+  "is_high_risk": false,
+  "clinical_focus": "diagnosis",
+  "pico_analysis": {{
+    "patient_problem": "high blood pressure and fast heart rate in a 45-year-old",
+    "intervention": "none",
+    "comparison": "none",
+    "outcome": "diagnosis or investigation"
+  }},
+  "simplified_search_query": "hypertension tachycardia",
+  "inferred_diseases": ["Hypertension", "Tachycardia"],
+  "synonym_expansion": {{
+    "hypertension": ["hypertension", "high blood pressure", "elevated blood pressure"],
+    "tachycardia": ["tachycardia", "fast heart rate", "rapid heartbeat"],
+    "Hypertension": ["hypertension", "high blood pressure", "elevated blood pressure"],
+    "Tachycardia": ["tachycardia", "fast heart rate", "rapid heartbeat"]
+  }}
+}}
+
+User Query:
+{query}
 """
         messages = [HumanMessage(content=prompt)]
-        response = await llm.ainvoke(messages)
+        response = await _call_llm_with_retry(llm, messages)
         content = response.content if isinstance(response.content, str) else str(response.content)
         content = content.strip()
         if content.startswith("```"):
