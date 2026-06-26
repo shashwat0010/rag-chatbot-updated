@@ -22,12 +22,11 @@ def get_pipeline() -> RAGPipeline:
 
 def format_for_whatsapp(response: QueryResponse) -> str:
     """Format RAG response into WhatsApp friendly plain text formatting."""
-    # Convert Markdown bold **text** to WhatsApp bold *text*
-    answer = response.answer
-    answer = re.sub(r'\*\*(.*?)\*\*', r'*\1*', answer)
     
-    def build_message(include_note: bool) -> str:
-        parts = [answer]
+    def build_message(answer_text: str, include_confidence_note: bool) -> str:
+        # Convert Markdown bold **text** to WhatsApp bold *text*
+        formatted_answer = re.sub(r'\*\*(.*?)\*\*', r'*\1*', answer_text)
+        parts = [formatted_answer]
         
         if response.citations:
             parts.append("\n*Citations:*")
@@ -35,23 +34,52 @@ def format_for_whatsapp(response: QueryResponse) -> str:
                 year_str = f" ({citation.year})" if citation.year else ""
                 parts.append(f"{i}. *{citation.title}* - {citation.journal}{year_str}\n   {citation.pubmed_url}")
                 
-        if include_note and response.confidence_note:
+        if include_confidence_note and response.confidence_note:
             note = re.sub(r'\*\*(.*?)\*\*', r'*\1*', response.confidence_note)
             parts.append(f"\n_Note: {note}_")
             
         return "\n".join(parts)
 
-    # First try with note
-    res_str = build_message(include_note=True)
-    if len(res_str) > 1600:
-        # Try without note to avoid truncation of core findings
-        res_str = build_message(include_note=False)
-        
-    if len(res_str) > 1600:
-        # Still too long, truncate with a notice
-        notice = "\n\n_[Note: Message truncated due to WhatsApp length limits]_"
-        res_str = res_str[:1600 - len(notice)] + notice
-        
+    raw_answer = response.answer
+
+    # 1. Try first with both clinical notes and confidence note included
+    res_str = build_message(raw_answer, include_confidence_note=True)
+    if len(res_str) <= 1600:
+        return res_str
+
+    # 2. If it exceeds, try removing the confidence note first
+    res_str = build_message(raw_answer, include_confidence_note=False)
+    if len(res_str) <= 1600:
+        return res_str
+
+    # 3. If it still exceeds, remove the Clinical Notes section from the answer text
+    # (while keeping the citations / papers retrieved!)
+    pruned_answer = raw_answer
+    for marker in ["**Clinical notes:**", "**Clinical Notes:**", "*Clinical notes:*", "*Clinical Notes:*", "Clinical notes:", "Clinical Notes:"]:
+        if marker in pruned_answer:
+            pruned_answer = pruned_answer.split(marker)[0].strip()
+            break
+
+    res_str = build_message(pruned_answer, include_confidence_note=False)
+    if len(res_str) <= 1600:
+        return res_str
+
+    # 4. If it still exceeds, perform a clean truncation of the answer, keeping citations at the bottom
+    citations_part = ""
+    if response.citations:
+        citations_lines = ["\n*Citations:*"]
+        for i, citation in enumerate(response.citations, 1):
+            year_str = f" ({citation.year})" if citation.year else ""
+            citations_lines.append(f"{i}. *{citation.title}* - {citation.journal}{year_str}\n   {citation.pubmed_url}")
+        citations_part = "\n".join(citations_lines)
+
+    notice = "\n\n_[Note: Message truncated due to WhatsApp length limits]_"
+    max_answer_len = 1600 - len(citations_part) - len(notice)
+    
+    formatted_pruned_answer = re.sub(r'\*\*(.*?)\*\*', r'*\1*', pruned_answer)
+    truncated_answer = formatted_pruned_answer[:max_answer_len]
+    res_str = truncated_answer + notice + citations_part
+    
     return res_str
 
 async def get_rag_reply(query: str) -> str:
