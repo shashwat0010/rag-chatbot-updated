@@ -1,6 +1,7 @@
+import asyncio
 import logging
 import re
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, Request, Response, Form, Query, BackgroundTasks, HTTPException
 import httpx
 
@@ -20,81 +21,92 @@ def get_pipeline() -> RAGPipeline:
         _pipeline = RAGPipeline()
     return _pipeline
 
-def format_for_whatsapp(response: QueryResponse) -> str:
-    """Format RAG response into WhatsApp friendly plain text formatting."""
+def format_for_whatsapp(response: QueryResponse) -> List[str]:
+    """Format RAG response into WhatsApp friendly plain text formatting, splitting into 2 messages if needed."""
     
-    def build_message(answer_text: str, include_confidence_note: bool) -> str:
-        # Convert Markdown bold **text** to WhatsApp bold *text*
-        formatted_answer = re.sub(r'\*\*(.*?)\*\*', r'*\1*', answer_text)
-        parts = [formatted_answer]
-        
-        if response.citations:
-            parts.append("\n*Citations:*")
-            for i, citation in enumerate(response.citations, 1):
-                year_str = f" ({citation.year})" if citation.year else ""
-                parts.append(f"{i}. *{citation.title}* - {citation.journal}{year_str}\n   {citation.pubmed_url}")
-                
-        if include_confidence_note and response.confidence_note:
-            note = re.sub(r'\*\*(.*?)\*\*', r'*\1*', response.confidence_note)
-            parts.append(f"\n_Note: {note}_")
-            
-        return "\n".join(parts)
-
-    raw_answer = response.answer
-
-    # 1. Try first with both clinical notes and confidence note included
-    res_str = build_message(raw_answer, include_confidence_note=True)
-    if len(res_str) <= 1600:
-        return res_str
-
-    # 2. If it exceeds, try removing the confidence note first
-    res_str = build_message(raw_answer, include_confidence_note=False)
-    if len(res_str) <= 1600:
-        return res_str
-
-    # 3. If it still exceeds, remove the Clinical Notes section from the answer text
-    # (while keeping the citations / papers retrieved!)
-    pruned_answer = raw_answer
-    for marker in ["**Clinical notes:**", "**Clinical Notes:**", "*Clinical notes:*", "*Clinical Notes:*", "Clinical notes:", "Clinical Notes:"]:
-        if marker in pruned_answer:
-            pruned_answer = pruned_answer.split(marker)[0].strip()
-            break
-
-    res_str = build_message(pruned_answer, include_confidence_note=False)
-    if len(res_str) <= 1600:
-        return res_str
-
-    # 4. If it still exceeds, perform a clean truncation of the answer, keeping citations at the bottom
+    # Format the components
+    answer = response.answer
+    answer = re.sub(r'\*\*(.*?)\*\*', r'*\1*', answer)
+    
     citations_part = ""
     if response.citations:
-        citations_lines = ["\n*Citations:*"]
+        citations_lines = ["*Citations:*"]
         for i, citation in enumerate(response.citations, 1):
             year_str = f" ({citation.year})" if citation.year else ""
             citations_lines.append(f"{i}. *{citation.title}* - {citation.journal}{year_str}\n   {citation.pubmed_url}")
         citations_part = "\n".join(citations_lines)
+        
+    note_part = ""
+    if response.confidence_note:
+        note = re.sub(r'\*\*(.*?)\*\*', r'*\1*', response.confidence_note)
+        note_part = f"_Note: {note}_"
 
-    notice = "\n\n_[Note: Message truncated due to WhatsApp length limits]_"
-    max_answer_len = 1600 - len(citations_part) - len(notice)
+    # Try to build a single message
+    parts = [answer]
+    if citations_part:
+        parts.append("\n" + citations_part)
+    if note_part:
+        parts.append("\n" + note_part)
+    full_message = "\n".join(parts)
     
-    formatted_pruned_answer = re.sub(r'\*\*(.*?)\*\*', r'*\1*', pruned_answer)
-    truncated_answer = formatted_pruned_answer[:max_answer_len]
-    res_str = truncated_answer + notice + citations_part
-    
-    return res_str
+    if len(full_message) <= 1600:
+        return [full_message]
 
-async def get_rag_reply(query: str) -> str:
-    """Invokes safety checks and RAG pipeline to get formatted reply text."""
+    # Exceeds 1600: Split into 2 messages
+    # Message 1: Answer
+    # Message 2: Citations + Note
+    msg1 = answer
+    
+    msg2_parts = []
+    if citations_part:
+        msg2_parts.append(citations_part)
+    if note_part:
+        msg2_parts.append(note_part)
+    msg2 = "\n\n".join(msg2_parts)
+    
+    # Check if Message 1 needs pruning or truncation to fit 1600
+    if len(msg1) > 1600:
+        # Try pruning Clinical notes from Answer first
+        pruned_answer = response.answer
+        for marker in ["**Clinical notes:**", "**Clinical Notes:**", "*Clinical notes:*", "*Clinical Notes:*", "Clinical notes:", "Clinical Notes:"]:
+            if marker in pruned_answer:
+                pruned_answer = pruned_answer.split(marker)[0].strip()
+                break
+        msg1 = re.sub(r'\*\*(.*?)\*\*', r'*\1*', pruned_answer)
+        
+        # If it still exceeds, hard-truncate Msg 1
+        if len(msg1) > 1600:
+            notice = "\n\n_[Note: Answer truncated due to WhatsApp length limits]_"
+            msg1 = msg1[:1600 - len(notice)] + notice
+            
+    # Check if Message 2 needs pruning or truncation to fit 1600
+    if len(msg2) > 1600:
+        # Try removing the confidence note first
+        msg2_parts = []
+        if citations_part:
+            msg2_parts.append(citations_part)
+        msg2 = "\n\n".join(msg2_parts)
+        
+        # If it still exceeds, hard-truncate the citations
+        if len(msg2) > 1600:
+            notice = "\n\n_[Note: Citations truncated due to WhatsApp length limits]_"
+            msg2 = msg2[:1600 - len(notice)] + notice
+            
+    return [msg1, msg2]
+
+async def get_rag_reply(query: str) -> List[str]:
+    """Invokes safety checks and RAG pipeline to get formatted reply text list."""
     settings = get_settings()
     if not settings.mistral_api_key:
-        return "System configuration error: Mistral API key is missing."
+        return ["System configuration error: Mistral API key is missing."]
         
     try:
         safety = await check_query_safety(query, settings.block_emergency_keywords)
         if not safety.allowed:
-            return safety.message or "Query classification safety refusal."
+            return [safety.message or "Query classification safety refusal."]
             
         if safety.risk_level in ("NON_MEDICAL", "PATIENT_SPECIFIC") and safety.message:
-            return safety.message
+            return [safety.message]
 
         # Run RAG (limit to 3 papers for mobile readability)
         result = await get_pipeline().run(
@@ -109,7 +121,7 @@ async def get_rag_reply(query: str) -> str:
         return format_for_whatsapp(result)
     except Exception as e:
         logger.exception("Failed to run RAG pipeline for WhatsApp")
-        return "An error occurred while searching the medical literature database. Please try again later."
+        return ["An error occurred while searching the medical literature database. Please try again later."]
 
 # --- Twilio Webhook Handler ---
 
@@ -140,8 +152,10 @@ async def send_twilio_reply(to_number: str, from_number: str, text: str):
 async def process_and_reply_twilio(query: str, to_number: str, from_number: str):
     """Processes RAG query and sends reply via Twilio REST API"""
     try:
-        reply_text = await get_rag_reply(query)
-        await send_twilio_reply(to_number=to_number, from_number=from_number, text=reply_text)
+        reply_texts = await get_rag_reply(query)
+        for text in reply_texts:
+            await send_twilio_reply(to_number=to_number, from_number=from_number, text=text)
+            await asyncio.sleep(0.5)
     except Exception as e:
         logger.exception("Error in Twilio background task processing: %s", e)
 
@@ -163,11 +177,13 @@ async def twilio_webhook(
         return Response(content="", status_code=200)
     else:
         # Synchronous reply fallback (TwiML XML response)
-        reply_text = await get_rag_reply(Body)
+        reply_texts = await get_rag_reply(Body)
+        xml_messages = ""
+        for text in reply_texts:
+            xml_messages += f"<Message>{text}</Message>\n"
         xml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Message>{reply_text}</Message>
-</Response>"""
+    {xml_messages}</Response>"""
         return Response(content=xml_content, media_type="application/xml")
 
 # --- Meta WhatsApp Business Cloud API Webhook Handler ---
@@ -218,8 +234,10 @@ async def send_meta_reply(phone_number_id: str, to_number: str, text: str):
 async def process_and_reply_meta(query: str, phone_number_id: str, to_number: str):
     """Processes RAG query and sends reply to Meta Business API"""
     try:
-        reply_text = await get_rag_reply(query)
-        await send_meta_reply(phone_number_id=phone_number_id, to_number=to_number, text=reply_text)
+        reply_texts = await get_rag_reply(query)
+        for text in reply_texts:
+            await send_meta_reply(phone_number_id=phone_number_id, to_number=to_number, text=text)
+            await asyncio.sleep(0.5)
     except Exception as e:
         logger.exception("Error in Meta background task processing: %s", e)
 
