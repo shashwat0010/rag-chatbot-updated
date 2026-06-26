@@ -93,7 +93,8 @@ class RAGPipeline:
         logger.info("Dynamic expanded PubMed query: %s", expanded_query)
 
         # 2. Search PubMed using the high-quality Boolean expanded query
-        papers = await search_pubmed(expanded_query, max_results=max_papers, raw_query=query)
+        search_limit = max(settings.pubmed_max_results, max_papers) if max_papers else settings.pubmed_max_results
+        papers = await search_pubmed(expanded_query, max_results=search_limit, raw_query=query)
         papers = prioritize_trusted_journals(papers)
 
         # 3. Handle zero search results fallback
@@ -142,7 +143,7 @@ class RAGPipeline:
 
             # Filter candidates through strict medical relevance checker
             if hybrid_chunks:
-                # 1. Identify the top 5 unique papers to check in a batch
+                # 1. Identify the top 10 unique papers to check in a batch
                 unique_papers = []
                 seen_pmids = set()
                 for chunk in hybrid_chunks:
@@ -150,7 +151,7 @@ class RAGPipeline:
                     if p.pmid not in seen_pmids:
                         seen_pmids.add(p.pmid)
                         unique_papers.append(p)
-                        if len(unique_papers) >= 5:
+                        if len(unique_papers) >= 10:
                             break
 
                 # 2. Call batch relevance check in a single LLM request
@@ -174,7 +175,18 @@ class RAGPipeline:
                 hybrid_chunks = filtered_hybrid_chunks
                 papers = [p for p in papers if relevance_map.get(p.pmid, False)]
 
-            chunks = hybrid_chunks[:settings.pubmed_retrieval_top_k]
+            if max_papers and hybrid_chunks:
+                selected_pmids = []
+                for chunk in hybrid_chunks:
+                    pmid = chunk.paper.pmid
+                    if pmid not in selected_pmids:
+                        if len(selected_pmids) < max_papers:
+                            selected_pmids.append(pmid)
+                        else:
+                            continue
+                chunks = [c for c in hybrid_chunks if c.paper.pmid in selected_pmids]
+            else:
+                chunks = hybrid_chunks[:settings.pubmed_retrieval_top_k]
             
         except (OpenAIQuotaError, EmbeddingServiceError) as exc:
             logger.error("Embedding failed: %s", exc)
@@ -322,7 +334,8 @@ class RAGPipeline:
         logger.info("Dynamic expanded PubMed query: %s", expanded_query)
 
         # 2. Search PubMed using the high-quality Boolean expanded query
-        papers = await search_pubmed(expanded_query, max_results=max_papers, raw_query=query)
+        search_limit = max(settings.pubmed_max_results, max_papers) if max_papers else settings.pubmed_max_results
+        papers = await search_pubmed(expanded_query, max_results=search_limit, raw_query=query)
         papers = prioritize_trusted_journals(papers)
 
         # 3. Handle zero search results fallback
@@ -375,7 +388,7 @@ class RAGPipeline:
 
             # Filter candidates through strict medical relevance checker
             if hybrid_chunks:
-                # 1. Identify the top 5 unique papers to check in a batch
+                # 1. Identify the top 10 unique papers to check in a batch
                 unique_papers = []
                 seen_pmids = set()
                 for chunk in hybrid_chunks:
@@ -383,7 +396,7 @@ class RAGPipeline:
                     if p.pmid not in seen_pmids:
                         seen_pmids.add(p.pmid)
                         unique_papers.append(p)
-                        if len(unique_papers) >= 5:
+                        if len(unique_papers) >= 10:
                             break
 
                 # 2. Call batch relevance check in a single LLM request
@@ -407,7 +420,18 @@ class RAGPipeline:
                 hybrid_chunks = filtered_hybrid_chunks
                 papers = [p for p in papers if relevance_map.get(p.pmid, False)]
 
-            chunks = hybrid_chunks[:settings.pubmed_retrieval_top_k]
+            if max_papers and hybrid_chunks:
+                selected_pmids = []
+                for chunk in hybrid_chunks:
+                    pmid = chunk.paper.pmid
+                    if pmid not in selected_pmids:
+                        if len(selected_pmids) < max_papers:
+                            selected_pmids.append(pmid)
+                        else:
+                            continue
+                chunks = [c for c in hybrid_chunks if c.paper.pmid in selected_pmids]
+            else:
+                chunks = hybrid_chunks[:settings.pubmed_retrieval_top_k]
             
         except Exception as exc:
             logger.error("Search/Rerank/Embed failed in stream: %s", exc)
@@ -555,13 +579,35 @@ class RAGPipeline:
         synonym_expansion: dict,
         inferred_diseases: List[str]
     ) -> str:
-        # Clean up input keywords
-        keywords = [kw.strip() for kw in simplified_query.split() if kw.strip()]
-        if not keywords:
-            return simplified_query
+        # Clean up input keywords by extracting multi-word concepts first
+        remaining_query = simplified_query.lower()
+        matched_concepts = []
+        
+        # Sort keys by length descending to match longer phrases first
+        sorted_keys = sorted(synonym_expansion.keys(), key=len, reverse=True)
+        
+        for key in sorted_keys:
+            key_lower = key.lower().strip()
+            if not key_lower:
+                continue
+            if key_lower in remaining_query:
+                matched_concepts.append(key)
+                remaining_query = remaining_query.replace(key_lower, " ")
+        
+        # Add remaining individual words
+        for word in remaining_query.split():
+            word_clean = word.strip()
+            if word_clean and word_clean not in [k.lower() for k in matched_concepts]:
+                # Only add if it's not a short stop word
+                if len(word_clean) >= 3:
+                    matched_concepts.append(word_clean)
+
+        if not matched_concepts:
+            # Fallback to simple split if no concepts matched
+            matched_concepts = [kw.strip() for kw in simplified_query.split() if kw.strip()]
 
         concept_groups = []
-        for kw in keywords:
+        for kw in matched_concepts:
             # Check for synonyms dynamically from the LLM dictionary
             syns = synonym_expansion.get(kw, [])
             # Make sure keys are matched case-insensitively
@@ -573,7 +619,6 @@ class RAGPipeline:
             
             # Ensure the keyword itself is in the synonyms list
             if kw not in syns:
-                # Avoid inserting a duplicate that is case-insensitive-only
                 if not any(s.lower() == kw.lower() for s in syns):
                     syns = [kw] + syns
             
@@ -585,7 +630,7 @@ class RAGPipeline:
         for disease in inferred_diseases:
             # Check if this disease is already represented in search keywords to avoid redundant groups
             disease_lower = disease.lower()
-            if any(disease_lower == kw.lower() for kw in keywords):
+            if any(disease_lower in kw.lower() or kw.lower() in disease_lower for kw in matched_concepts):
                 continue
                 
             syns = synonym_expansion.get(disease, [])
