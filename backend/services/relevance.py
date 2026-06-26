@@ -43,7 +43,8 @@ async def check_papers_relevance_batch(query: str, papers: list) -> Dict[str, Tu
         llm = ChatMistralAI(
             model=settings.mistral_model,
             api_key=settings.mistral_api_key,
-            temperature=0.0,
+            temperature=0.2,
+            top_p=0.9,
             max_tokens=600,
         )
 
@@ -51,7 +52,7 @@ async def check_papers_relevance_batch(query: str, papers: list) -> Dict[str, Tu
         for i, p in enumerate(papers, 1):
             papers_text += f"\n--- Paper {i} ---\nPMID: {p.pmid}\nTitle: {p.title}\nAbstract: {p.abstract}\n"
 
-        prompt = f"""Analyze the retrieved medical papers below and determine if they are directly relevant to the user query.
+        prompt = f"""Analyze the retrieved medical papers below and determine if they are relevant to the user query.
 
 Question:
 {query}
@@ -60,9 +61,9 @@ Retrieved Papers:
 {papers_text}
 
 Rules:
-1. For each paper, determine whether it directly addresses ALL major concepts in the question.
-2. If the question contains multiple concepts (e.g., comparing SSRIs vs SNRIs, or obesity and sleep apnea), the paper must address the primary relationship/interaction between them.
-3. Partial matches are not enough. Discussing only one concept is NOT enough; the paper must be rejected.
+1. For each paper, determine whether it is relevant or provides useful medical background/context to the user query.
+2. A paper should be marked as relevant (true) if it discusses the target disease, symptoms, clinical condition, or therapeutic agent mentioned in the query, or provides helpful clinical background.
+3. Only reject papers (false) if they are completely off-topic, unrelated, or study a totally different medical domain or target drug/disease.
 4. Output valid JSON only with this structure:
 {{
   "results": [
