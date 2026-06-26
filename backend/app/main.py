@@ -9,7 +9,7 @@ from slowapi.errors import RateLimitExceeded
 from app.config import get_settings
 from app.limiter import limiter
 from app.logging_config import setup_logging
-from app.routes import health, query, search
+from app.routes import health, query, search, whatsapp
 import psutil
 import logging
 
@@ -55,6 +55,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(query.router)
 app.include_router(search.router)
+app.include_router(whatsapp.router)
 
 
 @app.exception_handler(Exception)

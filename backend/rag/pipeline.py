@@ -40,11 +40,18 @@ class RAGPipeline:
         # Clean query by stripping outer quotes and whitespace
         query = query.strip().strip('"').strip("'").strip()
 
+        # 1. Preprocess: Get or generate query analysis dynamically early
+        if analysis is None:
+            analysis = await check_query_safety(query, block_emergency=False)
+
+        # Check if greeting dynamically from LLM category or regex-free helper
+        is_greeting = (analysis and analysis.category == "GREETING") or is_greeting_or_meta(query)
+
         is_valid, reason, q_score, ignored_tokens = assess_query_quality(query)
         logger.info("Query quality score: %.2f (Ignored tokens: %s)", q_score, ignored_tokens)
         logger.info("Assessed risk level: %s", risk_level)
         
-        if not is_valid and not is_greeting_or_meta(query):
+        if not is_valid and not is_greeting:
             return generate_response(
                 answer=reason,
                 citations=[],
@@ -60,7 +67,7 @@ class RAGPipeline:
         query = re.sub(r'\s+', ' ', query).strip()
 
         # Handle greetings/meta queries early to skip PubMed search
-        if is_greeting_or_meta(query):
+        if is_greeting:
             answer, cited_indices, _ = await self._get_llm().generate(query, [])
             return generate_response(
                 answer=answer,
@@ -71,10 +78,6 @@ class RAGPipeline:
                 sources_searched=[],
             )
 
-        # 1. Preprocess: Get or generate query analysis dynamically
-        if analysis is None:
-            analysis = await check_query_safety(query, block_emergency=False)
-            
         translated_query = analysis.simplified_search_query or query
         inferred_diseases = analysis.inferred_diseases
         

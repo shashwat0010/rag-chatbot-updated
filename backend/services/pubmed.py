@@ -48,7 +48,8 @@ _STOP_WORDS = {
     "about", "against", "between", "into", "through", "during", "before", "after", "above", "below",
     "to", "from", "up", "down", "in", "out", "on", "off", "over", "under", "again", "further",
     "then", "once", "hi", "hello", "hii", "hey", "howdy", "greetings", "of", "is", "are", "was",
-    "were", "be", "been", "being", "have", "has", "had", "do", "does", "did"
+    "were", "be", "been", "being", "have", "has", "had", "do", "does", "did", "i", "am", "my", "me",
+    "we", "us", "our", "you", "your", "he", "she", "his", "her", "they", "them", "their", "it", "its"
 }
 
 # Clinical/search filler words that do not represent core medical concepts and should be ignored in keyword fallbacks
@@ -61,7 +62,9 @@ FALLBACK_IGNORED = {
     "relationships", "link", "links", "correlation", "correlations", "role", "roles",
     "impact", "impacts", "specifically", "focusing", "focus", "particular", "particularly",
     "rates", "rate", "focuses", "focused", "detail", "details", "analysis", "analyses",
-    "study", "studies", "evaluation", "evaluations", "assessment", "assessments", "review", "reviews"
+    "study", "studies", "evaluation", "evaluations", "assessment", "assessments", "review", "reviews",
+    "seeing", "case", "presents", "presenting", "presented", "male", "female", "man", "woman", "boy", "girl",
+    "year", "old", "years", "age", "aged", "diagnosed", "history", "stage", "suggest", "suggests", "use", "uses"
 }
 
 

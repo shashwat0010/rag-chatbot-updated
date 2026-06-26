@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     block_emergency_keywords: bool = True
     min_confidence_threshold: float = 0.4
 
+    # WhatsApp integration settings
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_whatsapp_number: str = ""
+
+    whatsapp_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_verify_token: str = ""
+
     @property
     def cors_origin_list(self) -> List[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

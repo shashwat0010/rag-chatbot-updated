@@ -77,7 +77,8 @@ Formatting rules (strict):
 
 Content rules:
 - Never invent studies, statistics, or recommendations not in the context.
-- If context is inadequate, set insufficient_evidence to true and use empty arrays.
+- If the query asks about drug dosages, specific clinical parameters, precautions, or specific criteria, you must extract and provide the exact values, numbers, guidelines, and dosages from the text rather than a general summary. Do not synthesize or omit specific quantitative clinical details (e.g., '10-20 mg daily', 'eGFR < 30 ml/min/1.73m2').
+- Set insufficient_evidence to true and use empty arrays ONLY if there is absolutely no relevant data in the context. If the context has papers about the topic (e.g., curcumin and cancer) but they do not show a definitive cure, do NOT set insufficient_evidence to true; instead, summarize the studied effects of the compound cautiously and explicitly note that clinical evidence for a cure is lacking.
 - Use cautious language (may, suggests, limited evidence).
 - No personal medical advice or emergency instructions.
 
@@ -107,7 +108,8 @@ Formatting rules (strict):
 - Output a section starting with **Key findings:** followed by bullet points (one finding per line). Put each distinct finding on its own bullet. Include citation markers like [1], [2] on each bullet.
 - Output an optional section starting with **Clinical notes:** followed by bullet points for limitations or cautions.
 - Do NOT output JSON, HTML, or code blocks. Output Markdown directly.
-- If the sources are inadequate to answer, write exactly: "Current evidence is insufficient to provide a reliable answer."
+- If the sources contain relevant research about the concepts but do not support a definitive answer to the user's specific request (e.g., if they ask about a 'cure' but the literature only shows lab activity), do not write the default insufficient evidence phrase. Instead, summarize the studied effects of the compound cautiously, explaining that while lab activity is observed, clinical evidence for a cure is lacking.
+- If the query asks about drug dosages, specific clinical parameters, precautions, or specific criteria, you must extract and provide the exact values, numbers, guidelines, and dosages from the text rather than a general summary. Do not synthesize or omit specific quantitative clinical details (e.g., '10-20 mg daily', 'eGFR < 30 ml/min/1.73m2').
 - Use cautious language (may, suggests, limited evidence).
 - No personal medical advice or emergency instructions.
 """

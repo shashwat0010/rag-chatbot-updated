@@ -18,7 +18,11 @@ The application is structured around a modular RAG pipeline that balances speed,
 ```mermaid
 flowchart TD
     User([Clinician Query]) --> UI[Next.js Frontend]
-    UI --> API[FastAPI Backend]
+    User -->|WhatsApp Message| WA[WhatsApp Client]
+    
+    UI -->|HTTP Stream Request| API[FastAPI Backend]
+    WA -->|Webhook Events| Gateway[Twilio / Meta Cloud API]
+    Gateway -->|Webhook POST| API
     
     subgraph "1. Unified Query Analysis"
         API --> Guard[LLM Unified Classifier: Category, Intent, PICO, Diseases & Synonyms]
@@ -47,13 +51,18 @@ flowchart TD
         RRF --> Reranker[Lazy CrossEncoder Reranker]
     end
     
-    subgraph "6. Synthesis & SSE Streaming"
+    subgraph "6. Synthesis & Response Delivery"
         Reranker --> Calibration[Confidence Scoring Calibration]
         Calibration --> Prompt[Context-Rich Prompt]
         Prompt --> LLM[Mistral LLM]
-        LLM --> Stream[Token Stream: event: token] --> UI
-        LLM --> Grounding[Validate Answer Grounding]
-        Grounding --> Metadata[Metadata Event: citations, score, disclaimers] --> UI
+        
+        LLM -->|Token Stream| UI
+        LLM -->|Validate Grounding| Grounding[Validate Answer Grounding]
+        
+        Grounding -->|JSON Response| WebhookResponder[FastAPI Webhook Handler]
+        WebhookResponder -->|Sync TwiML XML| Gateway
+        WebhookResponder -->|Async REST API Call| Gateway
+        Gateway -->|Delivery| WA
     end
 ```
 
@@ -112,6 +121,11 @@ flowchart TD
   - `event: done`: Closes the connection on stream completion.
 - **Progressive UI Rendering**: The Next.js frontend uses a stream reader to parse events dynamically, rendering markdown bullets on-the-fly and smoothly fading in the citation cards and confidence badges at the end of the stream.
 
+### 9. Multi-Channel WhatsApp Integration (Twilio & Meta Business Cloud API)
+- **Fast Webhook Responders**: Built-in webhook POST routers for `/whatsapp/twilio` and `GET`/`POST` `/whatsapp/meta`.
+- **Async REST API Processing**: Avoids 15-second gateway timeout limits by returning instant HTTP 200 OK acknowledgements and processing the RAG pipeline asynchronously via background tasks, replying via the Twilio REST or Meta Graph APIs.
+- **WhatsApp Formatter**: Formats output for mobile viewing. Converts Markdown bold syntax (`**`) to WhatsApp bold (`*`), lists citations with clean numbers, enforces raw PubMed URLs, and applies a safe 1,600 character truncation guard to ensure delivery.
+
 ---
 
 ## 🛠️ Project Structure
@@ -162,6 +176,17 @@ RATE_LIMIT_PER_MINUTE=20
 # Medical Safety
 BLOCK_EMERGENCY_KEYWORDS=true
 MIN_CONFIDENCE_THRESHOLD=0.4
+
+# WhatsApp configuration (Optional)
+# For Twilio (Async mode, fallback to TwiML if blank)
+TWILIO_ACCOUNT_SID=your_twilio_account_sid
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
+TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886
+
+# For Meta Cloud API Webhook
+WHATSAPP_TOKEN=your_meta_system_token
+WHATSAPP_PHONE_NUMBER_ID=your_meta_phone_number_id
+WHATSAPP_VERIFY_TOKEN=your_custom_verify_token
 ```
 
 ### 1. Backend Setup (FastAPI)

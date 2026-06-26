@@ -66,54 +66,26 @@ class QueryAnalysisResult:
 GuardrailResult = QueryAnalysisResult
 
 
-GREETING_PATTERNS = [
-    r"^(hi|hello|hey|greetings|howdy|good morning|good afternoon|good evening|hii|hii+)(\s.*)?$",
-    r"^(who are you|what can you do|how can you help|help)$",
-]
-
 def is_greeting_or_meta(query: str) -> bool:
-    normalized = query.strip().lower()
-    for pattern in GREETING_PATTERNS:
-        if re.match(pattern, normalized):
-            return True
+    normalized = query.strip().lower().rstrip("!?.")
+    greetings = {"hi", "hello", "hey", "greetings", "howdy", "good morning", "good afternoon", "good evening", "hii", "help"}
+    if normalized in greetings:
+        return True
+    if any(phrase in normalized for phrase in ["who are you", "what can you do", "how can you help"]):
+        return True
     return False
 
 async def check_query_safety(query: str, block_emergency: bool = True) -> QueryAnalysisResult:
     normalized = query.strip().lower()
-    if len(normalized) < 3:
+    is_greeting = is_greeting_or_meta(query)
+    
+    if len(normalized) < 3 and not is_greeting:
         return QueryAnalysisResult(
             allowed=False,
             message="Please enter a medical research question (at least 3 characters).",
         )
 
-    # 1. Emergency-related query block (fast regex check)
-    if block_emergency:
-        for pattern in EMERGENCY_PATTERNS:
-            if re.search(pattern, normalized, re.IGNORECASE):
-                logger.warning("Emergency-related query blocked (fast regex)")
-                return QueryAnalysisResult(
-                    allowed=False,
-                    is_emergency=True,
-                    risk_level="EMERGENCY",
-                    message=(
-                        "This appears to describe an acute medical emergency. "
-                        "Do not use this chatbot for urgent care. Seek immediate "
-                        "emergency medical attention or call your local emergency number."
-                    ),
-                )
-
-    # 2. Greeting check (fast regex check)
-    if is_greeting_or_meta(query):
-        return QueryAnalysisResult(
-            allowed=True,
-            category="GREETING",
-            risk_level="LOW",
-            simplified_search_query="",
-            inferred_diseases=[],
-            synonym_expansion={}
-        )
-
-    # 3. LLM Unified Query Analyzer (Scope, Emergency, High-Risk, PICO, Synonyms)
+    # 1. LLM Unified Query Analyzer (Scope, Emergency, High-Risk, PICO, Synonyms)
     settings = get_settings()
     if not settings.mistral_api_key:
         return QueryAnalysisResult(
@@ -142,6 +114,7 @@ Instructions:
      - "MEDICAL_IN_SCOPE": Professional medical research questions, queries about clinical trials, outcomes, drug efficacy, medical guidelines, or physiological mechanisms.
      - "PATIENT_SPECIFIC": Queries seeking patient-specific diagnosis, clinical treatment advice, prescribing decisions, or medical management of a specific patient's symptoms (e.g. "What should I prescribe?", "Here is my patient with X, what do I do?").
      - "NON_MEDICAL": General, irrelevant, or non-medical queries (e.g., weather, history, coding).
+     - "GREETING": Hello, hi, greetings, introduce yourself, or other conversational metadata/help queries.
     - "is_emergency": true ONLY if the query describes a clear, immediate, acute life-threatening medical emergency (such as active chest pain, cardiac arrest, severe bleeding, active stroke, anaphylaxis, or suicide risk). Do NOT flag sub-acute symptoms like a multi-day headache, blurry vision, high blood pressure, or general discomfort as emergencies, even if they require medical attention.
     - "is_high_risk": true if the query suggests replacing critical medical treatments (like chemotherapy, insulin, or prescribed life-saving drugs) with unverified alternative/home remedies, or stopping vital treatments.
 
@@ -164,7 +137,7 @@ Instructions:
 
 Output valid JSON only with this structure:
 {{
-  "category": "MEDICAL_IN_SCOPE" | "PATIENT_SPECIFIC" | "NON_MEDICAL",
+  "category": "MEDICAL_IN_SCOPE" | "PATIENT_SPECIFIC" | "NON_MEDICAL" | "GREETING",
   "is_emergency": true | false,
   "is_high_risk": true | false,
   "clinical_focus": "treatment" | "diagnosis" | "mechanism_of_action" | "prognosis" | "general",
@@ -204,50 +177,37 @@ Response:
   }}
 }}
 
-Query: I've had a headache for three days and my vision is a bit blurry. Is this something I need to worry about?
+Query: Hello, who are you?
 Response:
 {{
-  "category": "PATIENT_SPECIFIC",
+  "category": "GREETING",
   "is_emergency": false,
   "is_high_risk": false,
-  "clinical_focus": "diagnosis",
-  "pico_analysis": {{
-    "patient_problem": "persistent headache and blurred vision",
-    "intervention": "none",
-    "comparison": "none",
-    "outcome": "diagnosis or risk assessment"
-  }},
-  "simplified_search_query": "headache blurred vision persistent",
-  "inferred_diseases": ["Migraine with aura", "Idiopathic intracranial hypertension"],
-  "synonym_expansion": {{
-    "headache": ["headache", "cephalalgia", "head pain", "migraine"],
-    "blurred vision": ["blurred vision", "visual disturbance", "blurry vision"],
-    "persistent": ["persistent", "prolonged", "chronic"],
-    "Migraine with aura": ["Migraine with aura", "classic migraine", "migraine with visual aura"],
-    "Idiopathic intracranial hypertension": ["Idiopathic intracranial hypertension", "IIH", "pseudotumor cerebri"]
-  }}
+  "clinical_focus": "general",
+  "pico_analysis": {{}},
+  "simplified_search_query": "",
+  "inferred_diseases": [],
+  "synonym_expansion": {{}}
 }}
 
-Query: i am 45 years old, i am having high bp and heart rate
+Query: I want to treat breast cancer using baking soda instead of chemotherapy.
 Response:
 {{
-  "category": "PATIENT_SPECIFIC",
+  "category": "MEDICAL_IN_SCOPE",
   "is_emergency": false,
-  "is_high_risk": false,
-  "clinical_focus": "diagnosis",
+  "is_high_risk": true,
+  "clinical_focus": "treatment",
   "pico_analysis": {{
-    "patient_problem": "high blood pressure and fast heart rate in a 45-year-old",
-    "intervention": "none",
-    "comparison": "none",
-    "outcome": "diagnosis or investigation"
+    "patient_problem": "breast cancer",
+    "intervention": "baking soda",
+    "comparison": "chemotherapy",
+    "outcome": "cancer treatment"
   }},
-  "simplified_search_query": "hypertension tachycardia",
-  "inferred_diseases": ["Hypertension", "Tachycardia"],
+  "simplified_search_query": "breast cancer alternative treatment",
+  "inferred_diseases": ["Breast Neoplasms"],
   "synonym_expansion": {{
-    "hypertension": ["hypertension", "high blood pressure", "elevated blood pressure"],
-    "tachycardia": ["tachycardia", "fast heart rate", "rapid heartbeat"],
-    "Hypertension": ["hypertension", "high blood pressure", "elevated blood pressure"],
-    "Tachycardia": ["tachycardia", "fast heart rate", "rapid heartbeat"]
+    "breast cancer": ["breast cancer", "breast carcinoma", "breast neoplasms"],
+    "alternative treatment": ["alternative medicine", "complementary therapies"]
   }}
 }}
 
@@ -307,6 +267,9 @@ User Query:
             allowed = False
             risk_level = "NON_MEDICAL"
             message = "I am designed to assist with medical literature and clinical evidence. I cannot answer queries outside of this scope."
+        elif category == "GREETING":
+            allowed = True
+            risk_level = "LOW"
         elif category == "PATIENT_SPECIFIC":
             allowed = True
             risk_level = "PATIENT_SPECIFIC"
@@ -315,14 +278,6 @@ User Query:
                 allowed = True
                 risk_level = "HIGH"
                 message = "High-risk medical intent detected."
-
-        # Keep manual regex override for high-risk pattern safety check
-        if allowed and risk_level != "HIGH":
-            for pattern in HIGH_RISK_PATTERNS:
-                if re.search(pattern, normalized, re.IGNORECASE):
-                    risk_level = "HIGH"
-                    message = "High-risk medical intent detected."
-                    break
 
         logger.info("Dynamic Query classification: category=%s | risk=%s | allowed=%s", category, risk_level, allowed)
 
@@ -341,21 +296,18 @@ User Query:
     except Exception as exc:
         logger.error("Error analyzing query in LLM: %s", exc)
         # Fallback to pattern-based classification if LLM fails
-        for pattern in HIGH_RISK_PATTERNS:
-            if re.search(pattern, normalized, re.IGNORECASE):
-                logger.warning("High-risk medical intent detected (fallback)")
-                return QueryAnalysisResult(
-                    allowed=True,
-                    risk_level="HIGH",
-                    message="High-risk medical intent detected.",
-                    simplified_search_query=query,
-                )
+        high_risk_words = ["chemotherapy", "stop insulin", "stop medication", "replace chemotherapy", "avoid professional treatment", "home remedies instead of", "self-diagnosis", "can i stop"]
+        if any(w in normalized for w in high_risk_words):
+            logger.warning("High-risk medical intent detected (fallback)")
+            return QueryAnalysisResult(
+                allowed=True,
+                risk_level="HIGH",
+                message="High-risk medical intent detected.",
+                simplified_search_query=query,
+            )
 
-        treatment_only = re.search(
-            r"^(should i take|what dose should i|prescribe me|treat my|what should i prescribe|diagnose this patient|what do i prescribe)\b",
-            normalized,
-        )
-        if treatment_only:
+        patient_specific_phrases = ["should i take", "what dose should i", "prescribe me", "treat my", "what should i prescribe", "diagnose this patient", "what do i prescribe"]
+        if any(phrase in normalized for phrase in patient_specific_phrases):
             return QueryAnalysisResult(
                 allowed=True,
                 risk_level="PATIENT_SPECIFIC",
