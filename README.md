@@ -2,6 +2,11 @@
 
 An AI-powered medical research assistant designed for clinicians and researchers. It provides evidence-grounded answers by combining real-time **PubMed** literature retrieval with a custom **Retrieval-Augmented Generation (RAG)** pipeline.
 
+### 📱 Dual-Interface Support
+Clinicians can interact with the assistant through two fully integrated interfaces, both powered by the same backend RAG engine:
+1. **Interactive Next.js Web App**: Features full markdown rendering, SSE real-time streaming, and interactive citation cards.
+2. **WhatsApp Chatbot**: Integrated via Twilio or Meta Business API. Clinicians can query the RAG pipeline on-the-go with mobile-optimized formatting, dynamic note pruning, and guaranteed citation preservation under the 1,600-character mobile limit.
+
 > **⚠️ Disclaimer:** This tool is for research support only. It is not intended for emergency care, clinical diagnosis, or personal treatment decisions.
 
 **Live Demo:** [https://medi-chat-an1i.vercel.app/](https://medi-chat-an1i.vercel.app/)
@@ -71,8 +76,7 @@ flowchart TD
 ## 🚀 Key Features & Detailed Pipeline Explanation
 
 ### 1. Unified Query Analysis & Safety Classifier
-- **Fast Local Filters**: Simple greetings and emergency patterns are checked instantly via regular expressions to minimize server latency and API token consumption.
-- **LLM Unified Analyzer**: Clinical queries are passed to a single, structured Mistral LLM request that dynamically analyzes:
+- **Dynamic LLM Analyzer**: All safety checks and intent classifications are delegated fully to the Mistral AI query analyzer, eliminating fragile regex-based pre-filtering or overrides. It dynamically analyzes:
   - `category`: Classifies into `GREETING`, `MEDICAL_IN_SCOPE`, `PATIENT_SPECIFIC` (allowed with patient disclaimers), or `NON_MEDICAL` (blocked).
   - `is_emergency`: Flags immediate, acute life-threatening situations (e.g. cardiac arrest, active chest pain, suicide risk). Sub-acute symptoms (e.g., three-day headache, blurry vision, high blood pressure) are permitted to enable clinical research checks.
   - `is_high_risk`: Identifies proposals to stop vital treatments (e.g., stop insulin or replace chemotherapy).
