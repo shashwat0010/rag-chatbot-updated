@@ -237,9 +237,31 @@ npm run dev
 
 ---
 
-## 🛡️ Production Deployment (e.g., Render)
+## 🐳 Running Locally with Docker Compose
 
-The backend is configured to support memory constraints out-of-the-box:
-1. **Dynamic Reranking**: If deployed on a Render free tier containing only `512MB` of RAM, the system will detect that memory usage exceeds the safety threshold (`95%`) and bypass the heavy Cross-Encoder execution, ensuring high availability and zero OOM crashes. **Note: Bypassing the reranker in resource-constrained environments may reduce query precision. Run locally to ensure maximum semantic relevance.**
-2. **Docker Setup**: A `Dockerfile` is provided in both backend and frontend directories for containerized hosting.
-3. **CORS / Domain Security**: Ensure `CORS_ORIGINS` in your production environment variables points exactly to your frontend domain.
+If you have Docker Desktop installed, you can build and run both the Next.js frontend and FastAPI backend inside isolated containers with a single command:
+
+```bash
+docker compose up --build
+```
+* Once running:
+  * **Frontend Web App**: Accessible at `http://localhost:3000`
+  * **Backend API Docs**: Accessible at `http://localhost:8000/docs`
+
+---
+
+## 🛡️ Production Deployment
+
+The application is fully configured for a highly scalable, free, 24/7 cloud deployment:
+
+### 1. Backend (FastAPI) on Hugging Face Spaces
+The backend is deployed as a **Docker Space** on Hugging Face, listening on port `7860`.
+* **Repository Auto-Sync**: The project contains a `.github/workflows/sync_to_huggingface.yml` workflow which automatically builds and syncs your repository's tracked files to Hugging Face on every push to `main`.
+* **Environment variables (Secrets)**: Add your `MISTRAL_API_KEY`, `TWILIO_ACCOUNT_SID`, and `TWILIO_AUTH_TOKEN` in the **Settings** -> **Variables and secrets** tab of your Hugging Face Space.
+* **Webhook Endpoint**: `https://<your-space-subdomain>.hf.space/whatsapp/twilio`
+
+### 2. Frontend (Next.js) on Vercel
+The frontend Next.js website is deployed on Vercel.
+* **Setup**: Connect Vercel to your GitHub repository, set the **Root Directory** to `frontend`, and configure your environment variable:
+  * `NEXT_PUBLIC_API_URL`: Set this to your Hugging Face Space direct URL (e.g., `https://<your-space-subdomain>.hf.space`).
+
