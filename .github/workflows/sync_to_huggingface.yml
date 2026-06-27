@@ -22,9 +22,27 @@ jobs:
           mkdir deploy_dir
           git archive HEAD | tar -x -C deploy_dir
           cd deploy_dir
+          
+          # Dynamically inject the YAML frontmatter for Hugging Face Space configuration
+          cat << 'EOF' > temp_readme_header
+---
+title: Medical Rag Chatbot
+emoji: 🩺
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
+EOF
+          cat temp_readme_header README.md > temp_readme && mv temp_readme README.md
+          rm temp_readme_header
+
           git init
           git checkout -b main
           git add .
           git commit -m "Deploy application snapshot"
           git push -f https://Shas487f4ru:$HF_TOKEN@huggingface.co/spaces/Shas487f4ru/medical-rag-chatbot main
+
 

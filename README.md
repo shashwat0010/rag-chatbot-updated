@@ -1,15 +1,4 @@
----
-title: Medical Rag Chatbot
-emoji: 🩺
-colorFrom: blue
-colorTo: green
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # 🩺 Jubilant AI: Medical Research Assistant
-
 
 An AI-powered medical research assistant designed for clinicians and researchers. It provides evidence-grounded answers by combining real-time **PubMed** literature retrieval with a custom **Retrieval-Augmented Generation (RAG)** pipeline.
 
@@ -20,7 +9,7 @@ Clinicians can interact with the assistant through two fully integrated interfac
 
 > **⚠️ Disclaimer:** This tool is for research support only. It is not intended for emergency care, clinical diagnosis, or personal treatment decisions.
 
-**Live Demo:** [https://medi-chat-an1i.vercel.app/](https://medi-chat-an1i.vercel.app/)
+**Live Demo:** [https://rag-chatbot-updated.vercel.app](https://rag-chatbot-updated.vercel.app)
 
 > [!WARNING]
 > **Free-Tier Reranker Limitation**: The live demo is hosted on a resource-constrained free cloud tier. To avoid Out-of-Memory crashes, the deep semantic **Cross-Encoder reranking model is disabled** in the live demo, which may reduce the accuracy of multi-concept queries. For full accuracy and the complete RAG experience, **running the app locally is recommended**.
