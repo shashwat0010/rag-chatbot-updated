@@ -1,4 +1,15 @@
+---
+title: Medical Rag Chatbot
+emoji: 🩺
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # 🩺 Jubilant AI: Medical Research Assistant
+
 
 An AI-powered medical research assistant designed for clinicians and researchers. It provides evidence-grounded answers by combining real-time **PubMed** literature retrieval with a custom **Retrieval-Augmented Generation (RAG)** pipeline.
 
