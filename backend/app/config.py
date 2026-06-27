@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # Mistral AI (embeddings and generation)
     mistral_api_key: str = ""
     mistral_model: str = "mistral-large-latest"
+    mistral_concurrency_limit: int = 1
 
     pubmed_max_results: int = 15
     pubmed_retrieval_top_k: int = 8

@@ -2,8 +2,10 @@ import logging
 from typing import List
 
 import httpx
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
 from app.config import get_settings
+from app.concurrency import get_mistral_semaphore
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,27 @@ class EmbeddingServiceError(Exception):
 
 class OpenAIQuotaError(EmbeddingServiceError):
     """Kept for backward compatibility with pipeline error handling."""
+
+
+def _is_retryable_httpx_error(exc: BaseException) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code == 429 or exc.response.status_code >= 500
+    if isinstance(exc, (httpx.TimeoutException, httpx.RequestError)):
+        return True
+    return False
+
+
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=3, max=15),
+    retry=retry_if_exception(_is_retryable_httpx_error),
+    reraise=True
+)
+async def _do_embed_request(client: httpx.AsyncClient, url: str, headers: dict, payload: dict):
+    async with get_mistral_semaphore():
+        response = await client.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        return response
 
 
 async def _mistral_embed(texts: List[str]) -> List[List[float]]:
@@ -45,8 +68,7 @@ async def _mistral_embed(texts: List[str]) -> List[List[float]]:
 
     async with httpx.AsyncClient(timeout=HF_TIMEOUT) as client:
         try:
-            response = await client.post(MISTRAL_EMBED_URL, headers=headers, json=payload)
-            response.raise_for_status()
+            response = await _do_embed_request(client, MISTRAL_EMBED_URL, headers, payload)
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             if status == 401:

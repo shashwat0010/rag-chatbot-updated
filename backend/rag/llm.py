@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
+from app.concurrency import get_mistral_semaphore
 from rag.formatting import format_structured_answer, paragraph_to_bullets
 from rag.vector_store import RetrievedChunk
 from services.guardrails import INSUFFICIENT_EVIDENCE_MESSAGE, is_greeting_or_meta
@@ -22,7 +23,8 @@ logger = logging.getLogger(__name__)
 )
 async def _call_llm_with_retry(llm: ChatMistralAI, messages: list) -> any:
     """Invoke the LLM with automatic retry on transient errors (like 429 rate limits)."""
-    return await llm.ainvoke(messages)
+    async with get_mistral_semaphore():
+        return await llm.ainvoke(messages)
 
 
 @retry(
@@ -256,6 +258,16 @@ Respond in Markdown format (Summary, Key findings, and Clinical notes sections w
             HumanMessage(content=user_prompt),
         ]
         
-        stream = await _get_llm_stream_with_retry(self._llm, messages)
-        async for chunk in stream:
-            yield chunk.content
+        try:
+            async with get_mistral_semaphore():
+                stream = await _get_llm_stream_with_retry(self._llm, messages)
+                async for chunk in stream:
+                    yield chunk.content
+        except Exception as e:
+            logger.error("Streaming interrupted or failed: %s. Using extractive fallback.", e)
+            yield "\n\n**[Connection to AI interrupted due to heavy load. Displaying extracted evidence instead.]**\n\n"
+            extractive_fallback = "### Extracted Evidence\n\n"
+            for i, c in enumerate(chunks, start=1):
+                p = c.paper
+                extractive_fallback += f"* **{p.title}** (PMID: {p.pmid}): {c.text} [{i}]\n\n"
+            yield extractive_fallback

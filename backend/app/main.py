@@ -1,3 +1,4 @@
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -8,6 +9,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
 from app.limiter import limiter
+from app.concurrency import request_id_var
 from app.logging_config import setup_logging
 from app.routes import health, query, search, whatsapp
 import psutil
@@ -51,6 +53,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    req_id = str(uuid.uuid4())
+    request_id_var.set(req_id)
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = req_id
+    return response
 
 app.include_router(health.router)
 app.include_router(query.router)
