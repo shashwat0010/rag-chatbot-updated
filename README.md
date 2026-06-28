@@ -1,4 +1,4 @@
-# 🩺 Jubilant AI: Medical Research Assistant
+# 🩺 Medical Research Assistant
 
 An AI-powered medical research assistant designed for clinicians and researchers. It provides evidence-grounded answers by combining real-time **PubMed** literature retrieval with a custom **Retrieval-Augmented Generation (RAG)** pipeline.
 
@@ -133,7 +133,7 @@ flowchart TD
 ## 🛠️ Project Structure
 
 ```text
-jubilant_ai/
+medical-research-assistant/
 ├── frontend/             # Next.js UI
 │   ├── src/app/          # App layouts, style themes, and page routing
 │   ├── src/components/   # Presentational UI components (Chat interface, cards)
