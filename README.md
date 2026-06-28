@@ -11,10 +11,8 @@ Clinicians can interact with the assistant through two fully integrated interfac
 
 **Live Demo:** [https://rag-chatbot-updated.vercel.app](https://rag-chatbot-updated.vercel.app)
 
-> [!WARNING]
-> **Free-Tier Reranker Limitation**: The live demo is hosted on a resource-constrained free cloud tier. To avoid Out-of-Memory crashes, the deep semantic **Cross-Encoder reranking model is disabled** in the live demo, which may reduce the accuracy of multi-concept queries. For full accuracy and the complete RAG experience, **running the app locally is recommended**.
-
 ---
+
 
 ## 🏗️ System Architecture
 
