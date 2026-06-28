@@ -5,7 +5,7 @@ An AI-powered medical research assistant designed for clinicians and researchers
 ### 📱 Dual-Interface Support
 Clinicians can interact with the assistant through two fully integrated interfaces, both powered by the same backend RAG engine:
 1. **Interactive Next.js Web App**: Features full markdown rendering, SSE real-time streaming, and interactive citation cards.
-2. **WhatsApp Chatbot**: Integrated via Twilio or Meta Business API. Clinicians can query the RAG pipeline on-the-go with mobile-optimized formatting, dynamic note pruning, and guaranteed citation preservation under the 1,600-character mobile limit.
+2. **WhatsApp Chatbot**: Integrated via Twilio. Clinicians can query the RAG pipeline on-the-go with mobile-optimized formatting, dynamic note pruning, and guaranteed citation preservation under the 1,600-character mobile limit.
 
 > **⚠️ Disclaimer:** This tool is for research support only. It is not intended for emergency care, clinical diagnosis, or personal treatment decisions.
 
@@ -24,7 +24,7 @@ flowchart TD
     User -->|WhatsApp Message| WA[WhatsApp Client]
     
     UI -->|HTTP Stream Request| API[FastAPI Backend]
-    WA -->|Webhook Events| Gateway[Twilio / Meta Cloud API]
+    WA -->|Webhook Events| Gateway[Twilio API]
     Gateway -->|Webhook POST| API
     
     subgraph "1. Unified Query Analysis"
@@ -123,9 +123,9 @@ flowchart TD
   - `event: done`: Closes the connection on stream completion.
 - **Progressive UI Rendering**: The Next.js frontend uses a stream reader to parse events dynamically, rendering markdown bullets on-the-fly and smoothly fading in the citation cards and confidence badges at the end of the stream.
 
-### 9. Multi-Channel WhatsApp Integration (Twilio & Meta Business Cloud API)
-- **Fast Webhook Responders**: Built-in webhook POST routers for `/whatsapp/twilio` and `GET`/`POST` `/whatsapp/meta`.
-- **Async REST API Processing**: Avoids 15-second gateway timeout limits by returning instant HTTP 200 OK acknowledgements and processing the RAG pipeline asynchronously via background tasks, replying via the Twilio REST or Meta Graph APIs.
+### 9. WhatsApp Integration (Twilio API)
+- **Fast Webhook Responders**: Built-in webhook POST router for `/whatsapp/twilio`.
+- **Async REST API Processing**: Avoids 15-second gateway timeout limits by returning instant HTTP 200 OK acknowledgements and processing the RAG pipeline asynchronously via background tasks, replying via the Twilio REST API.
 - **WhatsApp Formatter**: Formats output for mobile viewing. Converts Markdown bold syntax (`**`) to WhatsApp bold (`*`), lists citations with clean numbers, enforces raw PubMed URLs, and applies a safe 1,600 character truncation guard to ensure delivery.
 
 ---
@@ -184,11 +184,6 @@ MIN_CONFIDENCE_THRESHOLD=0.4
 TWILIO_ACCOUNT_SID=your_twilio_account_sid
 TWILIO_AUTH_TOKEN=your_twilio_auth_token
 TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886
-
-# For Meta Cloud API Webhook
-WHATSAPP_TOKEN=your_meta_system_token
-WHATSAPP_PHONE_NUMBER_ID=your_meta_phone_number_id
-WHATSAPP_VERIFY_TOKEN=your_custom_verify_token
 ```
 
 ### 1. Backend Setup (FastAPI)
