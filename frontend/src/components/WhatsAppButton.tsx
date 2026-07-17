@@ -10,15 +10,14 @@ export function WhatsAppButton() {
     setShareUrl(window.location.href);
   }, []);
 
-  const phoneNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || "";
-  const customMessage = process.env.NEXT_PUBLIC_WHATSAPP_MESSAGE || "Check out this Medical Research Assistant!";
+  const phoneNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || "14155238886";
+  const customMessage = process.env.NEXT_PUBLIC_WHATSAPP_MESSAGE || "";
 
-  // Generate WhatsApp API URL
-  // If a number is specified, it opens a direct chat with that number.
-  // Otherwise, it acts as a share button sharing the website link.
-  const whatsappUrl = phoneNumber
-    ? `https://wa.me/${phoneNumber.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(customMessage)}`
-    : `https://wa.me/?text=${encodeURIComponent(customMessage + " " + shareUrl)}`;
+  // Generate WhatsApp API URL to open a direct chat
+  const whatsappUrl = `https://wa.me/${phoneNumber.replace(/[^0-9]/g, "")}${
+    customMessage ? `?text=${encodeURIComponent(customMessage)}` : ""
+  }`;
+
 
   return (
     <div className="fixed top-[88px] right-4 z-40 sm:top-auto sm:bottom-6 sm:right-6">
