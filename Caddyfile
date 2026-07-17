@@ -1,0 +1,13 @@
+medicochat.duckdns.org {
+    # Route API requests to the backend container
+    reverse_proxy /health* backend:8000
+    reverse_proxy /query* backend:8000
+    reverse_proxy /search* backend:8000
+    reverse_proxy /whatsapp* backend:8000
+    reverse_proxy /docs* backend:8000
+    reverse_proxy /redoc* backend:8000
+    reverse_proxy /openapi.json backend:8000
+
+    # Route all other web traffic to the Next.js frontend container
+    reverse_proxy * frontend:3000
+}
