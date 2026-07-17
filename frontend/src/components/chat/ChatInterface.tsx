@@ -8,6 +8,13 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { ResponseCard } from "@/components/chat/ResponseCard";
 import { checkHealth, queryMedicalResearch, queryMedicalResearchStream, type QueryResponse } from "@/lib/api";
 
+function generateId() {
+  if (typeof window !== "undefined" && window.crypto && window.crypto.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+}
+
 interface Message {
   id: string;
   role: "user" | "assistant";
@@ -53,12 +60,12 @@ export function ChatInterface() {
     if (!query || loading) return;
 
     const userMsg: Message = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       role: "user",
       content: query,
     };
 
-    const assistantMsgId = crypto.randomUUID();
+    const assistantMsgId = generateId();
     const initialAssistantMsg: Message = {
       id: assistantMsgId,
       role: "assistant",

@@ -9,7 +9,7 @@ Clinicians can interact with the assistant through two fully integrated interfac
 
 > **⚠️ Disclaimer:** This tool is for research support only. It is not intended for emergency care, clinical diagnosis, or personal treatment decisions.
 
-**Live Demo:** [https://rag-chatbot-updated.vercel.app](https://rag-chatbot-updated.vercel.app)
+**Live Demo:** [http://medicochat.duckdns.org](http://medicochat.duckdns.org)
 
 ---
 
@@ -246,4 +246,12 @@ The backend is deployed as a **Docker Space** on Hugging Face, listening on port
 The frontend Next.js website is deployed on Vercel.
 * **Setup**: Connect Vercel to your GitHub repository, set the **Root Directory** to `frontend`, and configure your environment variable:
   * `NEXT_PUBLIC_API_URL`: Set this to your Hugging Face Space direct URL (e.g., `https://<your-space-subdomain>.hf.space`).
+
+### 3. AWS Free Tier EC2 (Docker Compose)
+The application is deployed on a single `t2.micro` EC2 instance using Docker Compose.
+* **Host Setup**: Configured with a 2 GB swap file to prevent memory crashes, Docker, and ports `80` (HTTP) and `8000` (FastAPI) open in the Security Group.
+* **Build & Start**: Run the services by passing the domain name:
+  ```bash
+  NEXT_PUBLIC_API_URL=http://medicochat.duckdns.org:8000 docker compose up -d --build
+  ```
 

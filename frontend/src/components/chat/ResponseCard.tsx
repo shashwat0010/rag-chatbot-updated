@@ -11,22 +11,26 @@ interface ResponseCardProps {
   response: QueryResponse;
 }
 
-function confidenceVariant(score: number): "success" | "warning" | "secondary" {
-  if (score >= 0.72) return "success";
-  if (score >= 0.55) return "warning";
-  return "secondary";
+function getConfidenceStyles(score: number): string {
+  if (score >= 0.72) {
+    return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/25";
+  }
+  if (score >= 0.55) {
+    return "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/25";
+  }
+  return "bg-slate-500/10 text-slate-700 dark:text-slate-400 border-slate-500/25";
 }
 
 function CitationItem({ citation, index }: { citation: Citation; index: number }) {
   return (
-    <li className="rounded-lg border border-border/60 bg-muted/30 p-3 text-sm">
-      <div className="mb-1 flex items-start gap-2">
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+    <li className="rounded-xl border border-border/80 bg-muted/20 p-3.5 text-sm transition-all hover:bg-muted/40">
+      <div className="mb-2 flex items-start gap-2.5">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-xs font-bold text-primary">
           {index}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="font-medium leading-snug text-foreground">{citation.title}</p>
-          <p className="mt-1 text-muted-foreground">
+          <p className="font-semibold leading-snug text-foreground/90">{citation.title}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
             {citation.journal}
             {citation.year ? ` · ${citation.year}` : ""}
             {citation.authors ? ` · ${citation.authors}` : ""}
@@ -37,10 +41,10 @@ function CitationItem({ citation, index }: { citation: Citation; index: number }
         href={citation.pubmed_url}
         target="_blank"
         rel="noopener noreferrer"
-        className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+        className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 transition-colors"
       >
         View on PubMed (PMID: {citation.pmid})
-        <ExternalLink className="h-3 w-3" />
+        <ExternalLink className="h-3.5 w-3.5" />
       </a>
     </li>
   );
@@ -50,37 +54,45 @@ export function ResponseCard({ query, response }: ResponseCardProps) {
   const scorePercent = Math.round(response.confidence_score * 100);
 
   return (
-    <Card className="border-primary/10 shadow-md">
-      <CardHeader className="pb-3">
+    <Card className="relative overflow-hidden border border-border/70 shadow-lg backdrop-blur-md bg-card/95 transition-all">
+      {/* Top colored strip indicator */}
+      <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-primary to-sky-500" />
+      
+      <CardHeader className="pb-4 pt-6">
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 text-base font-bold tracking-tight">
             <FileText className="h-4 w-4 text-primary" />
-            Evidence-based answer
+            Evidence-based Synthesis
           </CardTitle>
-          <Badge variant={confidenceVariant(response.confidence_score)}>
+          <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold transition-colors ${getConfidenceStyles(response.confidence_score)}`}>
             Confidence: {scorePercent}%
-          </Badge>
+          </span>
           {response.insufficient_evidence && (
-            <Badge variant="warning">Insufficient evidence</Badge>
+            <span className="inline-flex items-center rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-0.5 text-xs font-bold text-amber-700 dark:text-amber-400">
+              Low Evidence
+            </span>
           )}
         </div>
-        <p className="text-xs text-muted-foreground">Query: {query}</p>
+        <p className="text-[11px] text-muted-foreground mt-1 bg-muted/40 px-2 py-1 rounded-md font-mono border border-border/40 inline-block w-fit">
+          Query: {query}
+        </p>
       </CardHeader>
-      <CardContent className="space-y-4">
+      
+      <CardContent className="space-y-5">
         <StructuredAnswer text={response.answer} />
 
-        <div className="flex items-start gap-2 rounded-lg border border-amber-200/80 bg-amber-50/80 p-3 text-sm text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+        <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/15 bg-amber-500/5 p-3.5 text-sm text-amber-900 dark:text-amber-100/90">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
           <div>
-            <p className="font-medium">Uncertainty note</p>
-            <p className="mt-1 opacity-90">{response.confidence_note}</p>
+            <p className="font-bold text-amber-700 dark:text-amber-400">Clinical Uncertainty Note</p>
+            <p className="mt-1 leading-relaxed opacity-95 text-xs sm:text-sm">{response.confidence_note}</p>
           </div>
         </div>
 
         {response.citations.length > 0 && (
-          <div>
-            <h4 className="mb-2 text-sm font-semibold">Citations</h4>
-            <ul className="space-y-2">
+          <div className="pt-2">
+            <h4 className="mb-3 text-sm font-bold tracking-tight text-foreground/80">Retrieved Citations ({response.citations.length})</h4>
+            <ul className="space-y-2.5">
               {response.citations.map((c, i) => (
                 <CitationItem key={c.pmid} citation={c} index={i + 1} />
               ))}
@@ -89,11 +101,12 @@ export function ResponseCard({ query, response }: ResponseCardProps) {
         )}
 
         {response.sources_searched.length > 0 && (
-          <p className="text-xs text-muted-foreground">
-            Sources: {response.sources_searched.join(", ")}
+          <p className="text-[11px] text-muted-foreground pt-1">
+            Validated Sources: {response.sources_searched.join(", ")}
           </p>
         )}
       </CardContent>
     </Card>
   );
 }
+
