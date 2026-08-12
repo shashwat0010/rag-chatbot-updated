@@ -16,26 +16,33 @@ An AI-powered medical research assistant designed for clinicians and researchers
 
 ## 🏗️ System Architecture
 
-The application is structured around a modular RAG pipeline that balances speed, cost, and memory efficiency:
+The application is structured around a modular RAG pipeline with hybrid cloud/local stores and persistent user history:
 
 ```mermaid
 flowchart TD
     User([Clinician Query]) --> UI[Next.js Frontend]
     User -->|WhatsApp Message| WA[WhatsApp Client]
     
-    UI -->|HTTP Stream Request| API[FastAPI Backend]
+    UI -->|Check Saved History?| HistCheck{In SQLite DB?}
+    HistCheck -- Yes --> InstantUI[Instant Render from SQLite DB - 0 API Calls]
+    HistCheck -- No --> API[FastAPI Backend]
+    
     WA -->|Webhook Events| Gateway[Twilio API]
     Gateway -->|Webhook POST| API
     
-    subgraph "1. Unified Query Analysis"
-        API --> Guard[LLM Unified Classifier: Category, Intent, PICO, Diseases & Synonyms]
+    subgraph "1. User Auth & Session Security"
+        API --> Auth[JWT Bearer Auth & Bcrypt Hashing]
+    end
+
+    subgraph "2. Unified Query Analysis"
+        Auth --> Guard[LLM Unified Classifier: Category, Intent, PICO, Diseases & Synonyms]
     end
     
-    subgraph "2. Dynamic Search Assembly"
+    subgraph "3. Dynamic Search Assembly"
         Guard --> Assembler[Dynamic Boolean Query Builder]
     end
     
-    subgraph "3. Dynamic Retrieval"
+    subgraph "4. Dynamic Literature Retrieval"
         Assembler --> PubMed[PubMed E-Utilities API]
         PubMed --> Fallback{Hits Found?}
         Fallback -- No --> Cascade[Cascading Fallback Query: 8-word -> 5-word -> 3-word]
@@ -43,23 +50,31 @@ flowchart TD
         Fallback -- Yes --> Scraper[Abstract Scraper & Chunker]
     end
     
-    subgraph "4. Vector Search & Fusion"
-        Scraper --> Embeddings[Mistral Embeddings]
-        Embeddings --> FAISS[FAISS Vector Store]
-        Scraper --> BM25[BM25 Keyword Search]
-        FAISS & BM25 --> RRF[Reciprocal Rank Fusion RRF]
+    subgraph "5. Hybrid Vector Search & RRF Fusion"
+        Scraper --> Embeddings[Mistral / OpenRouter Embeddings]
+        
+        Embeddings --> ModeCheck{Cloud Keys Set?}
+        
+        ModeCheck -- Yes Cloud --> Pinecone[Pinecone Vector DB - Dense]
+        ModeCheck -- Yes Cloud --> ES[Elasticsearch Cloud - Sparse BM25]
+        Pinecone & ES --> RRF1[Reciprocal Rank Fusion RRF]
+        
+        ModeCheck -- No Fallback --> FAISS[FAISS Vector Store - Dense]
+        ModeCheck -- No Fallback --> BM25[BM25Okapi Keyword Search - Sparse]
+        FAISS & BM25 --> RRF2[Reciprocal Rank Fusion RRF]
     end
     
-    subgraph "5. Deep Semantic Reranking"
-        RRF --> Reranker[Lazy CrossEncoder Reranker]
+    subgraph "6. Deep Semantic Reranking"
+        RRF1 & RRF2 --> Reranker[Lazy CrossEncoder Reranker]
     end
     
-    subgraph "6. Synthesis & Response Delivery"
+    subgraph "7. Synthesis, Response Delivery & Persistence"
         Reranker --> Calibration[Confidence Scoring Calibration]
         Calibration --> Prompt[Context-Rich Prompt]
-        Prompt --> LLM[Mistral LLM]
+        Prompt --> LLM[OpenRouter / Mistral LLM]
         
         LLM -->|Token Stream| UI
+        LLM -->|Save Search History| DB[(SQLite Database)]
         LLM -->|Validate Grounding| Grounding[Validate Answer Grounding]
         
         Grounding -->|JSON Response| WebhookResponder[FastAPI Webhook Handler]
@@ -68,6 +83,30 @@ flowchart TD
         Gateway -->|Delivery| WA
     end
 ```
+
+---
+
+## 🧠 Dual-Mode Retrieval & Hybrid Search Architecture
+
+The application uses an intelligent multi-tiered retrieval strategy depending on environment configuration and request type:
+
+| Search Component | Trigger Condition | Role & Mechanism |
+| :--- | :--- | :--- |
+| **Pinecone Cloud Store** *(Dense Vector Search)* | `PINECONE_API_KEY` is provided in `backend/.env`. | Converts query into 1,536-dim embeddings (`openai/text-embedding-3-small` / Mistral) and performs high-speed semantic vector similarity search. |
+| **Elasticsearch Cloud** *(Sparse Keyword Search)* | `ELASTICSEARCH_URL` & `ELASTICSEARCH_API_KEY` are provided in `backend/.env`. | Executes full-text BM25 keyword matching across indexed medical titles, abstracts, PMIDs, and drug names. |
+| **Cloud RRF Fusion** | Both Pinecone and Elasticsearch are active. | Combines Pinecone dense rankings with Elasticsearch BM25 sparse rankings using Reciprocal Rank Fusion ($k=60$). |
+| **Local FAISS + BM25** *(Local Fallback Mode)* | Cloud keys are absent / offline. | Builds in-memory `faiss.IndexFlatIP` (dense vector search) and `BM25Okapi` (sparse keyword search) locally and merges them with RRF fusion. |
+| **Cross-Encoder Reranker** *(Semantic Reranking)* | Runs on top candidate chunks after RRF fusion. | Uses `cross-encoder/ms-marco-MiniLM-L-6-v2` to score joint query-abstract attention pairs, filtering out false positives. |
+| **SQLite History Cache** *(Saved Search History)* | Logged-in user selects a query from the History Sidebar. | **Bypasses all retrieval & LLM steps** and instantly displays the pre-generated answer directly from the SQLite database. |
+
+### 💡 Workflow Logic Summary
+
+1. **New Research Query**:
+   - **Cloud Mode**: Queries Pinecone (dense vector) + Elasticsearch Cloud (sparse keyword) concurrently $\rightarrow$ Fuses via RRF $\rightarrow$ Cross-Encoder Reranks $\rightarrow$ LLM synthesizes response $\rightarrow$ Saves to SQLite DB.
+   - **Local Fallback Mode**: Builds local FAISS (dense vector) + local BM25 (sparse keyword) in memory $\rightarrow$ Fuses via RRF $\rightarrow$ Cross-Encoder Reranks $\rightarrow$ LLM synthesizes response $\rightarrow$ Saves to SQLite DB.
+
+2. **Selecting Saved Search History**:
+   - **0 API Calls / 0 Delay**: Retrieves answer directly from SQLite database and displays it instantly in the UI.
 
 ---
 
