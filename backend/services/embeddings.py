@@ -45,67 +45,68 @@ async def _do_embed_request(client: httpx.AsyncClient, url: str, headers: dict, 
 
 async def _mistral_embed(texts: List[str]) -> List[List[float]]:
     """
-    Call Mistral AI Embeddings API (free tier).
-    Model: mistral-embed (1024-dim, high quality, OpenAI-compatible endpoint).
-    Get a free key at: https://console.mistral.ai/
+    Call Mistral AI or OpenRouter Embeddings API, falling back to TF-IDF embeddings on any error.
     """
     settings = get_settings()
-    if not settings.mistral_api_key or settings.mistral_api_key == "your_mistral_key_here":
-        raise EmbeddingServiceError(
-            "Mistral API key is not configured. "
-            "Get a free key at https://console.mistral.ai/ "
-            "and set MISTRAL_API_KEY in backend/.env"
-        )
+    api_key = settings.openrouter_api_key or settings.mistral_api_key
+    if not api_key or api_key == "your_mistral_key_here":
+        from services.local_embeddings import get_local_embeddings
+        return get_local_embeddings(texts)
+
+    if api_key.startswith("sk-or-") or settings.openrouter_api_key:
+        embed_url = f"{settings.openrouter_base_url.rstrip('/')}/embeddings"
+        model_name = "openai/text-embedding-3-small"
+    else:
+        embed_url = MISTRAL_EMBED_URL
+        model_name = MISTRAL_EMBED_MODEL
 
     headers = {
-        "Authorization": f"Bearer {settings.mistral_api_key}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     payload = {
-        "model": MISTRAL_EMBED_MODEL,
+        "model": model_name,
         "input": texts,
     }
 
-    async with httpx.AsyncClient(timeout=HF_TIMEOUT) as client:
-        try:
-            response = await _do_embed_request(client, MISTRAL_EMBED_URL, headers, payload)
-        except httpx.HTTPStatusError as exc:
-            status = exc.response.status_code
-            if status == 401:
-                raise EmbeddingServiceError(
-                    "Invalid Mistral API key. Check MISTRAL_API_KEY in backend/.env"
-                ) from exc
-            if status == 429:
-                raise EmbeddingServiceError(
-                    "Mistral API rate limit hit. Please wait a moment and retry."
-                ) from exc
-            raise EmbeddingServiceError(
-                f"Mistral Embeddings API error ({status}): {exc.response.text[:200]}"
-            ) from exc
-        except httpx.TimeoutException as exc:
-            raise EmbeddingServiceError(
-                "Mistral Embeddings API timed out. Try again."
-            ) from exc
-        except httpx.RequestError as exc:
-            raise EmbeddingServiceError(
-                f"Cannot reach Mistral Embeddings API: {exc}"
-            ) from exc
+    try:
+        async with httpx.AsyncClient(timeout=HF_TIMEOUT) as client:
+            response = await _do_embed_request(client, embed_url, headers, payload)
+            data = response.json()
+            if "data" in data and data["data"]:
+                embeddings = [item["embedding"] for item in sorted(data["data"], key=lambda x: x["index"])]
+                logger.info("Got %d embeddings from API (dim=%d)", len(embeddings), len(embeddings[0]) if embeddings else 0)
+                return embeddings
+    except Exception as exc:
+        logger.warning("Embeddings API call failed (%s). Using local TF-IDF fallback.", exc)
 
-    data = response.json()
-    # Mistral returns {"data": [{"embedding": [...], "index": 0}, ...]}
-    embeddings = [item["embedding"] for item in sorted(data["data"], key=lambda x: x["index"])]
-    logger.info("Got %d embeddings from Mistral (dim=%d)", len(embeddings), len(embeddings[0]) if embeddings else 0)
-    return embeddings
+    from services.local_embeddings import get_local_embeddings
+    return get_local_embeddings(texts)
 
 
 async def embed_texts(texts: List[str], *, allow_local_fallback: bool = True) -> List[List[float]]:
-    """Embed a batch of document texts using Mistral AI Embeddings API (free)."""
+    """Embed a batch of document texts using Mistral AI / OpenRouter Embeddings API, with local fallback."""
     if not texts:
         return []
-    logger.info("Embedding %d texts via Mistral AI", len(texts))
-    return await _mistral_embed(texts)
+    settings = get_settings()
+    api_key = settings.openrouter_api_key or settings.mistral_api_key
+    if not api_key or api_key == "your_mistral_key_here":
+        logger.info("No API key configured for embeddings. Using local TF-IDF embedding fallback.")
+        from services.local_embeddings import get_local_embeddings
+        return get_local_embeddings(texts)
+
+    try:
+        logger.info("Embedding %d texts via Mistral AI", len(texts))
+        return await _mistral_embed(texts)
+    except Exception as e:
+        if allow_local_fallback:
+            logger.warning("Embedding API request failed (%s). Falling back to local embeddings.", e)
+            from services.local_embeddings import get_local_embeddings
+            return get_local_embeddings(texts)
+        raise
 
 
 async def embed_query(text: str) -> List[List[float]]:
-    """Embed a single query string using Mistral AI Embeddings API."""
-    return await _mistral_embed([text])
+    """Embed a single query string using Embeddings API with fallback."""
+    return await embed_texts([text], allow_local_fallback=True)
+

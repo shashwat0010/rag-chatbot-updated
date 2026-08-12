@@ -91,26 +91,37 @@ def _paper_to_chunks(paper: PaperMetadata) -> List[str]:
     return chunks
 
 
+import uuid
+from rag.pinecone_store import PineconeVectorStore
+from rag.elasticsearch_store import ElasticsearchStore
+
+
 class FAISSVectorStore:
     def __init__(self) -> None:
         self._index: Optional[faiss.IndexFlatIP] = None
         self._bm25: Optional[BM25Okapi] = None
         self._chunks: List[RetrievedChunk] = []
         self._dimension: int = 0
+        self.pinecone_store = PineconeVectorStore()
+        self.elasticsearch_store = ElasticsearchStore()
 
     @property
     def is_ready(self) -> bool:
+        if self.pinecone_store.is_ready or self.elasticsearch_store.is_ready:
+            return True
         return self._index is not None and len(self._chunks) > 0
 
     async def build_from_papers(self, papers: List[PaperMetadata]) -> None:
         self._chunks = []
         texts: List[str] = []
+        chunk_objects = []
+
         for paper in papers:
             for i, chunk_text in enumerate(_paper_to_chunks(paper)):
-                self._chunks.append(
-                    RetrievedChunk(paper=paper, text=chunk_text, score=0.0, chunk_index=i)
-                )
+                retrieved_chunk = RetrievedChunk(paper=paper, text=chunk_text, score=0.0, chunk_index=i)
+                self._chunks.append(retrieved_chunk)
                 texts.append(chunk_text)
+                chunk_objects.append((paper, chunk_text, i))
 
         if not texts:
             self._index = None
@@ -118,24 +129,53 @@ class FAISSVectorStore:
             return
 
         mem_before = psutil.virtual_memory().used / (1024 * 1024)
-        logger.info("Building BM25 and FAISS indices. RAM before: %.1f MB", mem_before)
+        logger.info("Building vector and keyword search indices. RAM before: %.1f MB", mem_before)
 
-        # 1. Build BM25 Index
+        # Generate dense embeddings
+        embeddings = await embed_texts(texts)
+        vectors = np.array(embeddings, dtype=np.float32)
+
+        # 1. Index to Pinecone & Elasticsearch if available
+        pinecone_payloads = []
+        for idx, ((paper, chunk_text, chunk_idx), vec) in enumerate(zip(chunk_objects, embeddings)):
+            chunk_id = f"chunk_{paper.pmid}_{chunk_idx}_{uuid.uuid4().hex[:6]}"
+            pinecone_payloads.append({
+                "id": chunk_id,
+                "vector": vec,
+                "metadata": {
+                    "pmid": paper.pmid,
+                    "title": paper.title,
+                    "journal": paper.journal,
+                    "year": str(paper.year or ""),
+                    "abstract": paper.abstract or "",
+                    "text": chunk_text,
+                    "chunk_index": chunk_idx,
+                }
+            })
+
+        if self.pinecone_store.is_ready:
+            await self.pinecone_store.upsert_chunks(pinecone_payloads)
+
+        if self.elasticsearch_store.is_ready:
+            await self.elasticsearch_store.index_chunks(pinecone_payloads)
+
+        # 2. Local Fallback Index (FAISS + rank-bm25)
         tokenized_texts = [text.lower().split() for text in texts]
         self._bm25 = BM25Okapi(tokenized_texts)
 
-        # 2. Build FAISS Index
-
-        embeddings = await embed_texts(texts)
-        vectors = np.array(embeddings, dtype=np.float32)
         faiss.normalize_L2(vectors)
         self._dimension = vectors.shape[1]
         self._index = faiss.IndexFlatIP(self._dimension)
         self._index.add(vectors)
         mem_after = psutil.virtual_memory().used / (1024 * 1024)
-        logger.info("Built FAISS index with %d chunks. RAM after: %.1f MB (Delta: %.1f MB)", len(texts), mem_after, mem_after - mem_before)
+        logger.info("Built vector indices with %d chunks. RAM after: %.1f MB", len(texts), mem_after)
 
     async def search(self, query: str, top_k: int = 8) -> List[RetrievedChunk]:
+        # If Pinecone or Elasticsearch are available, use persistent hybrid search
+        if self.pinecone_store.is_ready or self.elasticsearch_store.is_ready:
+            return await self._persistent_hybrid_search(query, top_k)
+
+        # Otherwise fallback to local FAISS + BM25Okapi
         if not self.is_ready or self._index is None or self._bm25 is None:
             return []
 
@@ -168,15 +208,12 @@ class FAISSVectorStore:
             if idx in faiss_ranks or idx in bm25_ranks:
                 f_rank = faiss_ranks.get(idx, 1000)
                 b_rank = bm25_ranks.get(idx, 1000)
-                # Ensure BM25 score > 0 to be considered a hit, otherwise heavily penalize
                 if idx in bm25_ranks and bm25_scores[idx] <= 0:
                     b_rank = 1000
                 rrf_scores[idx] = (1.0 / (rrf_k + f_rank)) + (1.0 / (rrf_k + b_rank))
 
-        # Sort by fused score
         fused_indices = sorted(rrf_scores.keys(), key=lambda idx: rrf_scores[idx], reverse=True)
 
-        # 4. Build Results
         results: List[RetrievedChunk] = []
         seen_pmids = set()
         for idx in fused_indices:
@@ -184,7 +221,6 @@ class FAISSVectorStore:
             if chunk.paper.pmid in seen_pmids and len(results) >= top_k:
                 continue
             seen_pmids.add(chunk.paper.pmid)
-            # Use original FAISS score for fallback compatibility, reranker will override it anyway
             orig_score = float(faiss_scores[0][list(faiss_indices[0]).index(idx)]) if idx in faiss_indices[0] else 0.5
             
             results.append(
@@ -199,3 +235,71 @@ class FAISSVectorStore:
                 break
 
         return results
+
+    async def _persistent_hybrid_search(self, query: str, top_k: int = 8) -> List[RetrievedChunk]:
+        query_vec = await embed_query(query)
+        
+        pinecone_hits = []
+        if self.pinecone_store.is_ready:
+            pinecone_hits = await self.pinecone_store.search(query_vec[0], top_k=top_k * 2)
+
+        es_hits = []
+        if self.elasticsearch_store.is_ready:
+            es_hits = await self.elasticsearch_store.search_bm25(query, top_k=top_k * 2)
+
+        # If both returns hits, fuse via RRF
+        combined_docs = {}
+        for rank, hit in enumerate(pinecone_hits):
+            meta = hit["metadata"]
+            doc_key = f"{meta.get('pmid')}_{meta.get('chunk_index')}"
+            combined_docs[doc_key] = {
+                "meta": meta,
+                "score": 1.0 / (60 + rank + 1)
+            }
+
+        for rank, hit in enumerate(es_hits):
+            src = hit["source"]
+            doc_key = f"{src.get('pmid')}_{src.get('chunk_index')}"
+            score = 1.0 / (60 + rank + 1)
+            if doc_key in combined_docs:
+                combined_docs[doc_key]["score"] += score
+            else:
+                combined_docs[doc_key] = {
+                    "meta": src,
+                    "score": score
+                }
+
+        # Sort by fused score
+        sorted_docs = sorted(combined_docs.values(), key=lambda x: x["score"], reverse=True)
+
+        results: List[RetrievedChunk] = []
+        seen_pmids = set()
+        for item in sorted_docs:
+            m = item["meta"]
+            pmid = m.get("pmid", "")
+            if pmid in seen_pmids and len(results) >= top_k:
+                continue
+            seen_pmids.add(pmid)
+
+            paper = PaperMetadata(
+                pmid=pmid,
+                title=m.get("title", ""),
+                journal=m.get("journal", ""),
+                year=int(m["year"]) if m.get("year") and str(m["year"]).isdigit() else None,
+                abstract=m.get("abstract", ""),
+                pubmed_url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+            )
+
+            results.append(
+                RetrievedChunk(
+                    paper=paper,
+                    text=m.get("text", ""),
+                    score=item["score"],
+                    chunk_index=int(m.get("chunk_index", 0)),
+                )
+            )
+            if len(results) >= top_k:
+                break
+
+        return results
+

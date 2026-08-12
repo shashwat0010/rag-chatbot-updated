@@ -33,17 +33,28 @@ def _llm_quota_message() -> str:
     )
 
 
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Request, Depends
+from sqlalchemy.orm import Session
+from models.database import SearchHistory, get_db, User
+from services.auth import get_current_user
+
+
 @router.post("/query", response_model=QueryResponse)
+@router.post("/api/query", response_model=QueryResponse)
 @limiter.limit(_rate_limit)
 async def query_medical_research(
     request: Request,
     body: QueryRequest,
+    current_user: Optional[User] = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ) -> QueryResponse:
     settings = get_settings()
-    if not settings.mistral_api_key:
+    api_key = settings.openrouter_api_key or settings.mistral_api_key
+    if not api_key:
         raise HTTPException(
             status_code=503,
-            detail="Mistral API key is not configured. Set MISTRAL_API_KEY in the environment.",
+            detail="API key is not configured. Set OPENROUTER_API_KEY or MISTRAL_API_KEY in backend/.env",
         )
 
     safety = await check_query_safety(body.query, settings.block_emergency_keywords)
@@ -73,6 +84,22 @@ async def query_medical_research(
         )
         if not result.confidence_note.startswith("Low confidence"):
             result.confidence_note = f"{result.confidence_note} {DISCLAIMER}"
+
+        # Persist query & response to search history if authenticated user
+        if current_user and db:
+            try:
+                history_entry = SearchHistory(
+                    user_id=current_user.id,
+                    query=body.query,
+                    response=result.answer,
+                    confidence_score=f"{result.confidence_score:.2f}",
+                    evidence_count=len(result.citations)
+                )
+                db.add(history_entry)
+                db.commit()
+            except Exception as e:
+                logger.error("Failed to save search history: %s", e)
+
         return result
     except OpenAIQuotaError as exc:
         raise HTTPException(status_code=402, detail=str(exc)) from exc
@@ -103,16 +130,20 @@ async def query_medical_research(
 
 
 @router.post("/query/stream")
+@router.post("/api/query/stream")
 @limiter.limit(_rate_limit)
 async def query_medical_research_stream(
     request: Request,
     body: QueryRequest,
+    current_user: Optional[User] = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ) -> StreamingResponse:
     settings = get_settings()
-    if not settings.mistral_api_key:
+    api_key = settings.openrouter_api_key or settings.mistral_api_key
+    if not api_key:
         raise HTTPException(
             status_code=503,
-            detail="Mistral API key is not configured. Set MISTRAL_API_KEY in the environment.",
+            detail="API key is not configured. Set OPENROUTER_API_KEY or MISTRAL_API_KEY in backend/.env",
         )
 
     safety = await check_query_safety(body.query, settings.block_emergency_keywords)
@@ -140,13 +171,53 @@ async def query_medical_research_stream(
 
     try:
         pipeline = get_pipeline()
-        generator = pipeline.run_stream(
+        raw_generator = pipeline.run_stream(
             body.query,
             max_papers=body.max_papers,
             risk_level=safety.risk_level,
             analysis=safety
         )
-        return StreamingResponse(generator, media_type="text/event-stream")
+
+        async def history_saving_generator():
+            full_response_chunks = []
+            confidence_score_val = "0.00"
+            evidence_count_val = 0
+
+            async for chunk in raw_generator:
+                yield chunk
+                try:
+                    if chunk.startswith("event: token\ndata: "):
+                        token_data = chunk.split("data: ", 1)[1].strip()
+                        token_str = json.loads(token_data)
+                        full_response_chunks.append(token_str)
+                    elif chunk.startswith("event: metadata\ndata: "):
+                        meta_data = chunk.split("data: ", 1)[1].strip()
+                        meta_dict = json.loads(meta_data)
+                        if "confidence_score" in meta_dict:
+                            confidence_score_val = f"{meta_dict['confidence_score']:.2f}"
+                        if "citations" in meta_dict:
+                            evidence_count_val = len(meta_dict["citations"])
+                except Exception:
+                    pass
+
+            if current_user and db:
+                try:
+                    accumulated_response = "".join(full_response_chunks).strip()
+                    if accumulated_response:
+                        history_entry = SearchHistory(
+                            user_id=current_user.id,
+                            query=body.query,
+                            response=accumulated_response,
+                            confidence_score=confidence_score_val,
+                            evidence_count=evidence_count_val
+                        )
+                        db.add(history_entry)
+                        db.commit()
+                        logger.info("Saved search history entry for user %s (query: %s)", current_user.id, body.query[:50])
+                except Exception as e:
+                    logger.error("Failed to save search history in stream: %s", e)
+
+        return StreamingResponse(history_saving_generator(), media_type="text/event-stream")
     except Exception as exc:
         logger.exception("Streaming query processing failed")
         raise HTTPException(

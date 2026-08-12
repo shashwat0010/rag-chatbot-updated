@@ -12,6 +12,6 @@ async def health_check() -> HealthResponse:
     return HealthResponse(
         status="ok",
         version="1.0.0",
-        llm_configured=bool(settings.mistral_api_key),
+        llm_configured=bool(settings.openrouter_api_key or settings.mistral_api_key),
     )
 

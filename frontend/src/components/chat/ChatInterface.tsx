@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Send, Stethoscope, Trash2 } from "lucide-react";
+import { Loader2, Send, Stethoscope, Trash2, History as HistoryIcon, User as UserIcon, LogOut, LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ResponseCard } from "@/components/chat/ResponseCard";
 import { checkHealth, queryMedicalResearch, queryMedicalResearchStream, type QueryResponse } from "@/lib/api";
+import { AuthModal } from "@/components/auth/AuthModal";
+import { HistorySidebar, SearchHistoryItem } from "@/components/history/HistorySidebar";
 
 function generateId() {
   if (typeof window !== "undefined" && window.crypto && window.crypto.randomUUID) {
@@ -35,14 +37,71 @@ export function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [apiStatus, setApiStatus] = useState<"checking" | "online" | "offline">("checking");
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // User Auth & History State
+  const [user, setUser] = useState<{ id: number; email: string; name?: string } | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
   useEffect(() => {
+    // Check saved auth state
+    if (typeof window !== "undefined") {
+      const savedToken = localStorage.getItem("auth_token");
+      const savedUserStr = localStorage.getItem("user_data");
+      if (savedToken) setToken(savedToken);
+      if (savedUserStr) {
+        try {
+          setUser(JSON.parse(savedUserStr));
+        } catch (e) {
+          console.error("Error parsing saved user:", e);
+        }
+      }
+    }
+
     checkHealth()
       .then(() => setApiStatus("online"))
       .catch(() => setApiStatus("offline"));
   }, []);
+
+  const handleLogout = () => {
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("user_data");
+    setToken(null);
+    setUser(null);
+  };
+
+  const handleAuthSuccess = (userData: { id: number; email: string; name?: string }, jwtToken: string) => {
+    setUser(userData);
+    setToken(jwtToken);
+  };
+
+  const handleSelectHistoryQuery = (item: SearchHistoryItem) => {
+    const userMsg: Message = {
+      id: generateId(),
+      role: "user",
+      content: item.query,
+    };
+
+    const assistantMsg: Message = {
+      id: generateId(),
+      role: "assistant",
+      query: item.query,
+      response: {
+        answer: item.response,
+        citations: [],
+        confidence_note: `Saved Search History (${item.created_at ? new Date(item.created_at).toLocaleDateString() : "Saved"})`,
+        confidence_score: item.confidence_score ? parseFloat(item.confidence_score) : 0.95,
+        insufficient_evidence: false,
+        sources_searched: ["Saved DB History"],
+      },
+    };
+
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+  };
+
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -87,7 +146,7 @@ export function ChatInterface() {
     try {
       await queryMedicalResearchStream(
         query,
-        (token) => {
+        (tokenStr) => {
           setMessages((prev) =>
             prev.map((msg) => {
               if (msg.id === assistantMsgId && msg.response) {
@@ -95,7 +154,7 @@ export function ChatInterface() {
                   ...msg,
                   response: {
                     ...msg.response,
-                    answer: msg.response.answer + token,
+                    answer: msg.response.answer + tokenStr,
                   },
                 };
               }
@@ -132,7 +191,8 @@ export function ChatInterface() {
               return msg;
             })
           );
-        }
+        },
+        token
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Something went wrong";
@@ -151,7 +211,7 @@ export function ChatInterface() {
     } finally {
       setLoading(false);
     }
-  }, [loading]);
+  }, [loading, token]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -162,8 +222,20 @@ export function ChatInterface() {
 
   return (
     <div className="flex h-full flex-col">
+      <AuthModal
+        isOpen={isAuthOpen}
+        onClose={() => setIsAuthOpen(false)}
+        onAuthSuccess={handleAuthSuccess}
+      />
+      <HistorySidebar
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        onSelectQuery={handleSelectHistoryQuery}
+        token={token}
+      />
+
       <header className="border-b border-border/60 bg-card/50 px-4 py-4 backdrop-blur sm:px-6">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-4">
+        <div className="mx-auto flex max-w-4xl items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
               <Stethoscope className="h-5 w-5" />
@@ -176,6 +248,45 @@ export function ChatInterface() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsHistoryOpen(true)}
+              className="gap-1.5 text-xs font-medium"
+              title="View Search History"
+            >
+              <HistoryIcon className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+              <span className="hidden sm:inline">History</span>
+            </Button>
+
+            {user ? (
+              <div className="flex items-center gap-2 border-l border-border/60 pl-2">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-lg">
+                  <UserIcon className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />
+                  <span className="max-w-[100px] truncate">{user.name || user.email}</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleLogout}
+                  title="Log out"
+                  className="h-8 w-8 text-muted-foreground hover:text-red-600"
+                >
+                  <LogOut className="h-4 w-4" />
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => setIsAuthOpen(true)}
+                className="gap-1.5 text-xs font-medium bg-teal-600 hover:bg-teal-700 text-white"
+              >
+                <LogIn className="h-3.5 w-3.5" />
+                <span>Sign In</span>
+              </Button>
+            )}
+
             <Button
               variant="ghost"
               size="icon"

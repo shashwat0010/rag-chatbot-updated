@@ -49,7 +49,48 @@ class SearchPapersResponse(BaseModel):
     query: str
 
 
+from pydantic import BaseModel, Field, ConfigDict
+
+
 class HealthResponse(BaseModel):
     status: str
     version: str
     llm_configured: bool
+
+
+class UserRegister(BaseModel):
+    email: str = Field(..., description="User email address")
+    password: str = Field(..., min_length=6, description="User password")
+    name: Optional[str] = None
+
+
+class UserLogin(BaseModel):
+    email: str = Field(..., description="User email address")
+    password: str = Field(..., description="User password")
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: "UserResponse"
+
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+    name: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SearchHistoryItem(BaseModel):
+    id: int
+    query: str
+    response: str
+    confidence_score: Optional[str] = None
+    evidence_count: int = 0
+    created_at: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+

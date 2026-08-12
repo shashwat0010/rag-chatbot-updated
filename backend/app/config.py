@@ -16,10 +16,12 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Mistral AI (embeddings and generation)
+    # Mistral AI / OpenRouter settings
     mistral_api_key: str = ""
-    mistral_model: str = "mistral-large-latest"
+    mistral_model: str = "openrouter/auto"
     mistral_concurrency_limit: int = 1
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
     pubmed_max_results: int = 15
     pubmed_retrieval_top_k: int = 8
@@ -44,6 +46,21 @@ class Settings(BaseSettings):
     whatsapp_token: str = ""
     whatsapp_phone_number_id: str = ""
     whatsapp_verify_token: str = ""
+
+    # Pinecone Vector DB settings
+    pinecone_api_key: str = ""
+    pinecone_index_name: str = "medical-rag-index"
+
+    # Elasticsearch settings
+    elasticsearch_url: str = "http://localhost:9200"
+    elasticsearch_api_key: str = ""
+    elasticsearch_index: str = "medical_papers_hybrid"
+
+    # Authentication & Persistence settings
+    jwt_secret_key: str = "supersecretjwtkey_change_in_production"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60 * 24 * 7  # 7 days
+    database_url: str = "sqlite:///./medical_rag.db"
 
     @property
     def cors_origin_list(self) -> List[str]:

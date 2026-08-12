@@ -1,3 +1,5 @@
+import logging
+import psutil
 import uuid
 from contextlib import asynccontextmanager
 
@@ -11,9 +13,8 @@ from app.config import get_settings
 from app.limiter import limiter
 from app.concurrency import request_id_var
 from app.logging_config import setup_logging
-from app.routes import health, query, search, whatsapp
-import psutil
-import logging
+from models.database import init_db
+from app.routes import auth, health, history, query, search, whatsapp
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,8 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing application lifespan...")
+    init_db()
+    logger.info("Database tables initialized.")
     mem_before = psutil.virtual_memory().used / (1024 * 1024)
     logger.info("Base RAM before API starts: %.1f MB", mem_before)
     
@@ -46,10 +49,18 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+] + settings.cors_origin_list
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=origins,
+    allow_origin_regex=r"https?://.*",
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -68,6 +79,8 @@ async def root():
 
 
 app.include_router(health.router)
+app.include_router(auth.router)
+app.include_router(history.router)
 app.include_router(query.router)
 app.include_router(search.router)
 app.include_router(whatsapp.router)

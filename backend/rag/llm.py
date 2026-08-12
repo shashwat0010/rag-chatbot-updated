@@ -117,13 +117,14 @@ Formatting rules (strict):
 """
 
 
-def _format_context(chunks: List[RetrievedChunk]) -> str:
+def _format_context(chunks: List[RetrievedChunk], max_chunks: int = 5) -> str:
     lines = []
-    for i, chunk in enumerate(chunks, start=1):
+    for i, chunk in enumerate(chunks[:max_chunks], start=1):
         p = chunk.paper
+        text_snippet = chunk.text[:350] + "..." if len(chunk.text) > 350 else chunk.text
         lines.append(
             f"[{i}] PMID:{p.pmid} | {p.title} | {p.journal} ({p.year or 'n/a'})\n"
-            f"Relevance:{chunk.score:.3f}\n{chunk.text}\n"
+            f"Relevance:{chunk.score:.3f}\n{text_snippet}\n"
         )
     return "\n".join(lines)
 
@@ -170,14 +171,30 @@ def _build_answer_from_parsed(parsed: dict) -> str:
 class MedicalLLM:
     def __init__(self) -> None:
         settings = get_settings()
-        if not settings.mistral_api_key:
-            raise ValueError("MISTRAL_API_KEY is not configured")
-        self._llm = ChatMistralAI(
-            model=settings.mistral_model,
-            api_key=settings.mistral_api_key,
-            temperature=0.1,
-            max_tokens=900,
-        )
+        api_key = settings.openrouter_api_key or settings.mistral_api_key
+        if not api_key:
+            raise ValueError("MISTRAL_API_KEY or OPENROUTER_API_KEY is not configured in backend/.env")
+        
+        model = settings.mistral_model or "mistralai/mistral-medium-3-5"
+
+        if api_key.startswith("sk-or-") or settings.openrouter_api_key:
+            from langchain_community.chat_models import ChatOpenAI
+            self._llm = ChatOpenAI(
+                model_name=model,
+                openai_api_key=api_key,
+                openai_api_base=settings.openrouter_base_url,
+                temperature=0.1,
+                max_tokens=900,
+            )
+            logger.info("Initialized MedicalLLM with OpenRouter API (model: %s)", model)
+        else:
+            self._llm = ChatMistralAI(
+                model=model,
+                api_key=api_key,
+                temperature=0.1,
+                max_tokens=900,
+            )
+            logger.info("Initialized MedicalLLM with Mistral AI API (model: %s)", model)
 
     async def generate(
         self,

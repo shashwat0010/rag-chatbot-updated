@@ -87,7 +87,8 @@ async def check_query_safety(query: str, block_emergency: bool = True) -> QueryA
 
     # 1. LLM Unified Query Analyzer (Scope, Emergency, High-Risk, PICO, Synonyms)
     settings = get_settings()
-    if not settings.mistral_api_key:
+    api_key = settings.openrouter_api_key or settings.mistral_api_key
+    if not api_key:
         return QueryAnalysisResult(
             allowed=True,
             risk_level="LOW",
@@ -98,12 +99,23 @@ async def check_query_safety(query: str, block_emergency: bool = True) -> QueryA
         )
 
     try:
-        llm = ChatMistralAI(
-            model=settings.mistral_model,
-            api_key=settings.mistral_api_key,
-            temperature=0.0,
-            max_tokens=600,
-        )
+        model = settings.mistral_model or "mistralai/mistral-medium-3-5"
+        if api_key.startswith("sk-or-") or settings.openrouter_api_key:
+            from langchain_community.chat_models import ChatOpenAI
+            llm = ChatOpenAI(
+                model_name=model,
+                openai_api_key=api_key,
+                openai_api_base=settings.openrouter_base_url,
+                temperature=0.0,
+                max_tokens=600,
+            )
+        else:
+            llm = ChatMistralAI(
+                model=model,
+                api_key=api_key,
+                temperature=0.0,
+                max_tokens=600,
+            )
 
         prompt = f"""You are a medical query analyzer and safety classifier.
 Analyze the user query below and provide safety classifications, clinical intent, a PICO framework breakdown, optimized PubMed search terms, and dynamic synonyms.

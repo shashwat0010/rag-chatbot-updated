@@ -24,10 +24,15 @@ export interface HealthResponse {
   llm_configured: boolean;
 }
 
-export async function queryMedicalResearch(query: string): Promise<QueryResponse> {
+export async function queryMedicalResearch(query: string, token?: string | null): Promise<QueryResponse> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const res = await fetch(`${API_BASE}/query`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ query }),
   });
 
@@ -50,12 +55,18 @@ export async function queryMedicalResearchStream(
   query: string,
   onToken: (token: string) => void,
   onMetadata: (metadata: QueryResponse) => void,
-  onError: (error: string) => void
+  onError: (error: string) => void,
+  token?: string | null
 ): Promise<void> {
   try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
     const res = await fetch(`${API_BASE}/query/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ query }),
     });
 

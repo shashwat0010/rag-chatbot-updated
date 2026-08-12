@@ -27,5 +27,6 @@ Thumbs.db
 # Logs
 *.log
 
-# FAISS / cache (ephemeral per session)
+# FAISS / cache / DB (ephemeral per session)
 *.index
+*.db

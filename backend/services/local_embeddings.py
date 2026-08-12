@@ -90,3 +90,8 @@ def tfidf_embed(texts: List[str]) -> List[List[float]]:
     vectorizer = TfidfVectorizer()
     vectorizer.fit(texts)
     return vectorizer.transform(texts)
+
+
+def get_local_embeddings(texts: List[str]) -> List[List[float]]:
+    """Alias for tfidf_embed."""
+    return tfidf_embed(texts)

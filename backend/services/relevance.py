@@ -33,20 +33,31 @@ async def check_papers_relevance_batch(query: str, papers: list) -> Dict[str, Tu
         relevance_map[str(p.pmid)] = (True, "Defaulting to relevant.")
 
     settings = get_settings()
-    if not settings.mistral_api_key:
+    api_key = settings.openrouter_api_key or settings.mistral_api_key
+    if not api_key:
         return relevance_map
 
     if not papers:
         return relevance_map
 
     try:
-        llm = ChatMistralAI(
-            model=settings.mistral_model,
-            api_key=settings.mistral_api_key,
-            temperature=0.2,
-            top_p=0.9,
-            max_tokens=600,
-        )
+        model = settings.mistral_model or "mistralai/mistral-medium-3-5"
+        if api_key.startswith("sk-or-") or settings.openrouter_api_key:
+            from langchain_community.chat_models import ChatOpenAI
+            llm = ChatOpenAI(
+                model_name=model,
+                openai_api_key=api_key,
+                openai_api_base=settings.openrouter_base_url,
+                temperature=0.2,
+                max_tokens=600,
+            )
+        else:
+            llm = ChatMistralAI(
+                model=model,
+                api_key=api_key,
+                temperature=0.2,
+                max_tokens=600,
+            )
 
         papers_text = ""
         for i, p in enumerate(papers, 1):
@@ -139,16 +150,28 @@ async def translate_query_pico(query: str) -> dict:
     }
     
     settings = get_settings()
-    if not settings.mistral_api_key:
+    api_key = settings.openrouter_api_key or settings.mistral_api_key
+    if not api_key:
         return default_res
         
     try:
-        llm = ChatMistralAI(
-            model=settings.mistral_model,
-            api_key=settings.mistral_api_key,
-            temperature=0.0,
-            max_tokens=250,
-        )
+        model = settings.mistral_model or "mistralai/mistral-medium-3-5"
+        if api_key.startswith("sk-or-") or settings.openrouter_api_key:
+            from langchain_community.chat_models import ChatOpenAI
+            llm = ChatOpenAI(
+                model_name=model,
+                openai_api_key=api_key,
+                openai_api_base=settings.openrouter_base_url,
+                temperature=0.0,
+                max_tokens=1200,
+            )
+        else:
+            llm = ChatMistralAI(
+                model=model,
+                api_key=api_key,
+                temperature=0.0,
+                max_tokens=1200,
+            )
         
         prompt = f"""You are a medical informatics expert. Analyze the raw user clinical query below (which may be conversational, symptom-heavy, or patient-specific) and translate it into search keywords optimized for PubMed, using the PICO (Patient, Intervention, Comparison, Outcome) framework.
 

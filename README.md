@@ -1,15 +1,15 @@
 # 🩺 Medical Research Assistant
 
-An AI-powered medical research assistant designed for clinicians and researchers. It provides evidence-grounded answers by combining real-time **PubMed** literature retrieval with a custom **Retrieval-Augmented Generation (RAG)** pipeline.
+An AI-powered medical research assistant designed for clinicians and researchers. It provides evidence-grounded answers by combining real-time **PubMed** literature retrieval with a custom **Retrieval-Augmented Generation (RAG)** pipeline, hybrid **Pinecone Vector DB** & **Elasticsearch Cloud** storage, and persistent search history.
 
-### 📱 Dual-Interface Support
-Clinicians can interact with the assistant through two fully integrated interfaces, both powered by the same backend RAG engine:
-1. **Interactive Next.js Web App**: Features full markdown rendering, SSE real-time streaming, and interactive citation cards.
+### 📱 Features & Dual-Interface Support
+1. **Interactive Next.js Web App**: Features full markdown rendering, SSE real-time streaming, user authentication, interactive citation cards, and a persistent Search History sidebar.
 2. **WhatsApp Chatbot**: Integrated via Twilio. Clinicians can query the RAG pipeline on-the-go with mobile-optimized formatting, dynamic note pruning, and guaranteed citation preservation under the 1,600-character mobile limit.
+3. **Hybrid Vector & Cloud Search Storage**: Seamlessly integrates **Pinecone Vector DB** and **Elasticsearch Cloud** with local FAISS + BM25Okapi fallbacks.
+4. **User Auth & Persistent History**: JWT Bearer token authentication with bcrypt password hashing and SQLite persistent search history, allowing users to save queries and view past answers instantly without re-retrieval.
+5. **OpenRouter & Free Model Support**: Powered by OpenRouter API (`openrouter/auto`) and Mistral AI embeddings.
 
 > **⚠️ Disclaimer:** This tool is for research support only. It is not intended for emergency care, clinical diagnosis, or personal treatment decisions.
-
-**Live Demo:** [http://medicochat.duckdns.org](http://medicochat.duckdns.org)
 
 ---
 

@@ -97,8 +97,9 @@ def format_for_whatsapp(response: QueryResponse) -> List[str]:
 async def get_rag_reply(query: str) -> List[str]:
     """Invokes safety checks and RAG pipeline to get formatted reply text list."""
     settings = get_settings()
-    if not settings.mistral_api_key:
-        return ["System configuration error: Mistral API key is missing."]
+    api_key = settings.openrouter_api_key or settings.mistral_api_key
+    if not api_key:
+        return ["System configuration error: API key (MISTRAL_API_KEY or OPENROUTER_API_KEY) is missing."]
         
     try:
         safety = await check_query_safety(query, settings.block_emergency_keywords)
